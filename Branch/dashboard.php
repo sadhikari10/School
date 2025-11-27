@@ -1,0 +1,107 @@
+<?php
+require_once 'connection.php';
+
+try {
+    $stmt = $pdo->query("SELECT id, name FROM schools ORDER BY name");
+    $schools = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch(PDOException $e) {
+    $schools = [];
+}
+
+$selectedSchoolId = null;
+if ($_POST['select_school'] ?? '') {
+    $selectedSchoolId = $_POST['school_id'] ?? null;
+    if ($selectedSchoolId) {
+        session_start();
+        $_SESSION['selected_school_id'] = $selectedSchoolId;
+        header("Location: select_items.php");
+        exit();
+    }
+}
+?>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>School Selection Dashboard</title>
+    <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+    <div class="dashboard-container">
+        <div class="header">
+            <h1>🏫 Select Your School</h1>
+            <p>Choose your school from the list or select Other</p>
+        </div>
+
+        <div class="search-container">
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="🔍 Search school..." autocomplete="off">
+            </div>
+        </div>
+
+        <form method="POST" id="schoolForm">
+            <input type="hidden" name="select_school" value="1">
+            <input type="hidden" name="school_id" id="selectedSchoolId">
+            
+            <div class="schools-grid" id="schoolsGrid">
+                <?php foreach ($schools as $school): ?>
+                    <div class="school-card" onclick="selectSchool(<?php echo $school['id']; ?>, this)">
+                        <div class="school-name"><?php echo htmlspecialchars($school['name']); ?></div>
+                    </div>
+                <?php endforeach; ?>
+                
+                <div class="school-card other-card" onclick="selectSchool(0, this)">
+                    <div class="school-name">Other</div>
+                </div>
+            </div>
+
+            <div class="proceed-section">
+                <button type="submit" class="proceed-btn" id="proceedBtn" disabled>Proceed to Dashboard</button>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        let selectedCard = null;
+
+        function selectSchool(schoolId, card) {
+            // Remove previous selection
+            if (selectedCard) {
+                selectedCard.classList.remove('selected');
+            }
+            
+            // Select new card
+            selectedCard = card;
+            card.classList.add('selected');
+            
+            // Set hidden input
+            document.getElementById('selectedSchoolId').value = schoolId;
+            
+            // Enable proceed button
+            const proceedBtn = document.getElementById('proceedBtn');
+            proceedBtn.disabled = false;
+            proceedBtn.innerHTML = '✅ Proceed to Dashboard';
+        }
+
+        // Search functionality
+        document.getElementById('searchInput').addEventListener('input', function() {
+            const query = this.value.toLowerCase();
+            const cards = document.querySelectorAll('.school-card:not(.other-card)');
+            
+            cards.forEach(card => {
+                const schoolName = card.querySelector('.school-name').textContent.toLowerCase();
+                if (schoolName.includes(query)) {
+                    card.style.display = 'flex';
+                } else {
+                    card.style.display = 'none';
+                }
+            });
+            
+            // Always show "Other" option
+            document.querySelector('.other-card').style.display = 'flex';
+        });
+    </script>
+</body>
+</html>
