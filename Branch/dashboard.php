@@ -1,5 +1,5 @@
 <?php
-require_once 'connection.php';
+require_once '../Common/connection.php';
 
 try {
     $stmt = $pdo->query("SELECT id, name FROM schools ORDER BY name");
@@ -8,12 +8,11 @@ try {
     $schools = [];
 }
 
-$selectedSchoolId = null;
 if ($_POST['select_school'] ?? '') {
-    $selectedSchoolId = $_POST['school_id'] ?? null;
-    if ($selectedSchoolId) {
+    $schoolId = $_POST['school_id'] ?? 0;
+    if ($schoolId !== null) {
         session_start();
-        $_SESSION['selected_school_id'] = $selectedSchoolId;
+        $_SESSION['selected_school_id'] = $schoolId;
         header("Location: select_items.php");
         exit();
     }
@@ -58,7 +57,7 @@ if ($_POST['select_school'] ?? '') {
             </div>
 
             <div class="proceed-section">
-                <button type="submit" class="proceed-btn" id="proceedBtn" disabled>Proceed to Dashboard</button>
+                <button type="submit" class="proceed-btn" id="proceedBtn" disabled>Proceed to Items</button>
             </div>
         </form>
     </div>
@@ -76,13 +75,13 @@ if ($_POST['select_school'] ?? '') {
             selectedCard = card;
             card.classList.add('selected');
             
-            // Set hidden input
+            // Set hidden input with school ID
             document.getElementById('selectedSchoolId').value = schoolId;
             
             // Enable proceed button
             const proceedBtn = document.getElementById('proceedBtn');
             proceedBtn.disabled = false;
-            proceedBtn.innerHTML = '✅ Proceed to Dashboard';
+            proceedBtn.innerHTML = '✅ Proceed to Items';
         }
 
         // Search functionality
