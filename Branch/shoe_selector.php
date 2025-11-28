@@ -13,9 +13,8 @@ class ShoeSelector {
      */
     public function getShoes() {
         try {
-            $stmt = $pdo->query("SELECT size, price_white, price_black FROM shoes ORDER BY size");
+            $stmt = $this->pdo->query("SELECT size, price_white, price_black FROM shoes ORDER BY size");
             $shoes = $stmt->fetchAll(PDO::FETCH_ASSOC);
-            
             $result = [];
             
             // Section 1: White shoes (only if price_white > 0)

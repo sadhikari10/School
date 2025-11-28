@@ -1,8 +1,7 @@
 <?php
 // pant_selector.php
 class PantSelector {
-    private $pdo;
-    private $schoolName;
+    private $pdo, $schoolName;
     
     public function __construct($pdo, $schoolName) {
         $this->pdo = $pdo;
@@ -18,7 +17,6 @@ class PantSelector {
         try {
             $stmt = $this->pdo->query("SELECT size, price_other, price_indian, price_timeline FROM pants ORDER BY size");
             $pants = $stmt->fetchAll(PDO::FETCH_ASSOC);
-            
             $result = [];
             
             if ($this->schoolName === 'Timeline') {
@@ -32,22 +30,20 @@ class PantSelector {
                 // Other schools: TWO SECTIONS
                 // Section 1: price_other
                 foreach ($pants as $pant) {
-                    $pantData = [
+                    $result[] = [
                         'size' => $pant['size'],
                         'display_price' => $pant['price_other'],
                         'section' => 'Other'
                     ];
-                    $result[] = $pantData;
                 }
                 
                 // Section 2: price_indian
                 foreach ($pants as $pant) {
-                    $pantData = [
+                    $result[] = [
                         'size' => $pant['size'],
                         'display_price' => $pant['price_indian'],
                         'section' => 'Indian'
                     ];
-                    $result[] = $pantData;
                 }
             }
             

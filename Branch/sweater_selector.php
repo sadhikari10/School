@@ -1,8 +1,7 @@
 <?php
 // sweater_selector.php
 class SweaterSelector {
-    private $pdo;
-    private $schoolName;
+    private $pdo, $schoolName;
     
     public function __construct($pdo, $schoolName) {
         $this->pdo = $pdo;
