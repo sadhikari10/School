@@ -5,15 +5,15 @@ require_once '../Common/connection.php';
 $schoolId = $_SESSION['selected_school_id'] ?? 0;
 $schoolName = $_SESSION['selected_school_name'] ?? 'Other';
 
-// Reordered categories
+// Reordered categories with corrected icons
 $categories = [
     'shirts' => ['name' => 'Shirts', 'icon' => '👔', 'sizes' => []],
     'pants' => ['name' => 'Pants', 'icon' => '👖', 'sizes' => []],
     'skirts' => ['name' => 'Skirts', 'icon' => '👗', 'sizes' => []],
     'coats' => ['name' => 'Coats', 'icon' => '🧥', 'sizes' => []],
-    'tracksuits' => ['name' => 'Tracksuits', 'icon' => '👕', 'sizes' => []], // Changed icon
+    'tracksuits' => ['name' => 'Tracksuits', 'icon' => '🏃‍♂️', 'sizes' => []], // Corrected to tracksuit icon
     'sweaters' => ['name' => 'Sweaters', 'icon' => '🧶', 'sizes' => []],
-    'stockings' => ['name' => 'Stockings', 'icon' => '🧦', 'sizes' => []],
+    'stockings' => ['name' => 'Stockings', 'icon' => '🧦', 'sizes' => []], // Already correct (socks)
     'shoes' => ['name' => 'Shoes', 'icon' => '👞', 'sizes' => []]
 ];
 
@@ -68,16 +68,34 @@ try {
         <header class="header">
             <h1>👕 Select Item Sizes</h1>
             <p>School: <strong><?php echo htmlspecialchars($schoolName); ?></strong></p>
-            <div class="selected-items" id="selectedItems">
-                <span>No items selected</span>
-            </div>
         </header>
 
         <?php if (isset($error)): ?>
             <div class="error"><?php echo $error; ?></div>
         <?php endif; ?>
 
+        <!-- Selected Items Preview Modal -->
+        <div class="modal" id="selectedItemsModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <span class="modal-icon">✅</span>
+                    <h3>Selected Items</h3>
+                    <span class="close" onclick="closeSelectedItemsModal()">&times;</span>
+                </div>
+                <div class="selected-items-list" id="selectedItemsList">
+                    <!-- Items will be populated by JavaScript -->
+                </div>
+                <div class="modal-actions">
+                    <button class="cancel-btn" onclick="closeSelectedItemsModal()">Continue Selecting</button>
+                    <button type="submit" form="itemsForm" class="proceed-btn" id="confirmProceedBtn">Proceed to Bill</button>
+                </div>
+            </div>
+        </div>
+
         <form method="POST" action="bill.php" id="itemsForm">
+            <input type="hidden" name="school_id" value="<?php echo $schoolId; ?>">
+            <input type="hidden" name="school_name" value="<?php echo htmlspecialchars($schoolName); ?>">
+            
             <?php foreach ($categories as $key => $category): ?>
                 <input type="hidden" name="selected_sizes[<?php echo $key; ?>]" id="selected_<?php echo $key; ?>" value="">
             <?php endforeach; ?>
@@ -110,7 +128,7 @@ try {
 
             <div class="actions">
                 <a href="dashboard.php" class="back-btn">← Back to Schools</a>
-                <button type="submit" class="next-btn" id="proceedBtn" disabled>Proceed to Bill</button>
+                <button type="button" class="next-btn" id="proceedBtn" onclick="showSelectedItemsModal()" disabled>Proceed to Bill</button>
             </div>
         </form>
     </div>
@@ -167,8 +185,8 @@ try {
             // Update hidden input
             document.getElementById(`selected_${categoryKey}`).value = size;
             
-            // Update selected items display
-            updateSelectedItems();
+            // Update proceed button
+            updateProceedButton();
             
             // Close modal after selection
             setTimeout(closeSizeModal, 300);
@@ -178,24 +196,68 @@ try {
             document.getElementById('sizeModal').style.display = 'none';
         }
 
-        function updateSelectedItems() {
+        function updateProceedButton() {
             const selectedCount = Object.keys(selectedSizes).length;
-            const selectedItemsEl = document.getElementById('selectedItems');
             const proceedBtn = document.getElementById('proceedBtn');
             
             if (selectedCount === 0) {
-                selectedItemsEl.innerHTML = '<span>No items selected</span>';
                 proceedBtn.disabled = true;
                 proceedBtn.style.opacity = '0.5';
+                proceedBtn.innerHTML = 'Proceed to Bill';
             } else {
-                selectedItemsEl.innerHTML = `<span>✅ ${selectedCount} item${selectedCount > 1 ? 's' : ''} selected</span>`;
                 proceedBtn.disabled = false;
                 proceedBtn.style.opacity = '1';
+                proceedBtn.innerHTML = `Proceed to Bill (${selectedCount} items)`;
             }
         }
 
+        function showSelectedItemsModal() {
+            const modal = document.getElementById('selectedItemsModal');
+            const itemsList = document.getElementById('selectedItemsList');
+            
+            itemsList.innerHTML = '';
+            
+            let hasItems = false;
+            for (const [categoryKey, size] of Object.entries(selectedSizes)) {
+                const category = categoriesData[categoryKey];
+                const sizeData = category.sizes.find(s => s.size === size);
+                
+                if (sizeData) {
+                    hasItems = true;
+                    const itemDiv = document.createElement('div');
+                    itemDiv.className = 'selected-item';
+                    itemDiv.innerHTML = `
+                        <div class="item-info">
+                            <span class="item-icon">${category.icon}</span>
+                            <span class="item-name">${category.name} - ${size}</span>
+                        </div>
+                        <div class="item-price">Rs. ${parseFloat(getPrice(sizeData)).toLocaleString()}</div>
+                    `;
+                    itemsList.appendChild(itemDiv);
+                }
+            }
+            
+            if (!hasItems) {
+                itemsList.innerHTML = '<div class="no-items">No items selected</div>';
+            }
+            
+            modal.style.display = 'flex';
+        }
+
+        function getPrice(sizeData) {
+            if (sizeData.school_prices) return sizeData.school_prices;
+            if (sizeData.price) return sizeData.price;
+            if (sizeData.price_white) return sizeData.price_white;
+            if (sizeData.price_3pic) return sizeData.price_3pic;
+            return 0;
+        }
+
+        function closeSelectedItemsModal() {
+            document.getElementById('selectedItemsModal').style.display = 'none';
+        }
+
         // Initialize
-        updateSelectedItems();
+        updateProceedButton();
     </script>
 </body>
 </html>
