@@ -255,14 +255,30 @@ $categories = [
         }
         /* FIXED: Modal actions - No more cropping */
         .modal-actions {
-            display: flex;
-            gap: 15px;
-            justify-content: center;
-            padding: 25px 20px 30px 20px !important;  /* EXTRA BOTTOM PADDING */
-            margin: 0;
-            background: transparent;
-            border-top: 1px solid #e2e8f0;
-        }
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+    padding: 20px;
+    width: 100%;
+    box-sizing: border-box;
+    flex-wrap: wrap; /* important fix */
+}
+
+.continue-shopping-btn,
+.pay-bill-btn {
+    padding: 10px 16px;
+    font-size: 0.95rem;
+    border-radius: 8px;
+}
+
+#selectedItemsModal .modal-content {
+    height: auto;
+    max-height: 95vh;     /* increase modal height */
+    padding: 20px;        /* reduce padding so buttons fit */
+    box-sizing: border-box;
+}
+
+
     </style>
 </head>
 <body>
