@@ -12,12 +12,26 @@ require_once 'sweater_selector.php';
 require_once 'stocking_selector.php';
 require_once 'shoe_selector.php';
 
+// ============================================
+// **PERSISTENT SELECTIONS - SAVE/LOAD LOGIC**
+// ============================================
+
 $schoolId = $_SESSION['selected_school_id'] ?? 0;
 $schoolName = $_SESSION['selected_school_name'] ?? 'Other';
 
+// **LOAD selections from SESSION** (persistent across reloads)
 if (!isset($_SESSION['selected_sizes'])) {
     $_SESSION['selected_sizes'] = [];
 }
+
+// **SAVE selections to SESSION** when form submitted
+if ($_POST['save_session'] ?? false) {
+    foreach ($_POST['selected_sizes'] ?? [] as $key => $value) {
+        $_SESSION['selected_sizes'][$key] = $value;
+    }
+    exit(json_encode(['status' => 'saved']));
+}
+
 $selectedSizes = $_SESSION['selected_sizes'];
 
 // Initialize ALL selectors
@@ -73,7 +87,7 @@ $categories = [
             background: #5a67d8;
         }
         
-        /* Order summary modal scroll */
+        /* Order summary modal */
         .selected-items-list {
             max-height: 60vh;
             overflow-y: auto;
@@ -96,9 +110,47 @@ $categories = [
             background: #219a52;
         }
         
-        /* Clear button styling */
-        .clear-selection-btn {
-            background: linear-gradient(135deg, #e74c3c, #c0392b);
+        /* Selected item styling */
+        .selected-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            margin-bottom: 10px;
+            background: #f8f9ff;
+            border: 2px solid #e1e8ff;
+            border-radius: 12px;
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+        }
+        .selected-item:hover {
+            background: #f0f4ff;
+            border-color: #667eea;
+            transform: translateX(5px);
+        }
+        .item-details {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .item-name {
+            font-weight: 600;
+            color: #2d3748;
+            font-size: 0.95rem;
+        }
+        .item-size {
+            color: #718096;
+            font-size: 0.85rem;
+        }
+        .item-price {
+            font-weight: 700;
+            color: #27ae60;
+            font-size: 1rem;
+        }
+        
+        /* Continue shopping button */
+        .continue-shopping-btn {
+            background: linear-gradient(135deg, #667eea, #764ba2);
             color: white;
             border: none;
             padding: 12px 24px;
@@ -107,11 +159,109 @@ $categories = [
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s ease;
-            box-shadow: 0 4px 15px rgba(231, 76, 60, 0.3);
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+            margin-right: 10px;
         }
-        .clear-selection-btn:hover {
+        .continue-shopping-btn:hover {
             transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(231, 76, 60, 0.4);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        /* Bottom buttons visibility */
+        .actions {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 25px 20px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            margin-top: 30px;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
+            position: relative;
+            z-index: 10;
+        }
+        .back-btn {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            padding: 14px 24px;
+            border-radius: 12px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 1.05rem;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .back-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+        }
+        .next-btn {
+            background: linear-gradient(135deg, #27ae60, #2ecc71);
+            color: white;
+            border: none;
+            padding: 16px 32px;
+            border-radius: 15px;
+            font-size: 1.1rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 6px 20px rgba(46, 204, 113, 0.3);
+        }
+        .next-btn:hover:not(:disabled) {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 30px rgba(46, 204, 113, 0.4);
+        }
+        .next-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        /* Pay bill button */
+        .pay-bill-btn {
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            color: white;
+            border: none;
+            padding: 16px 32px;
+            border-radius: 15px;
+            font-size: 1.1rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 6px 20px rgba(231, 76, 60, 0.3);
+        }
+        .pay-bill-btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 30px rgba(231, 76, 60, 0.4);
+        }
+        
+        /* Selected indicator */
+        .selected-indicator {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #27ae60;
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.9rem;
+            font-weight: bold;
+            box-shadow: 0 4px 12px rgba(39, 174, 96, 0.4);
+        }
+        /* FIXED: Modal actions - No more cropping */
+        .modal-actions {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            padding: 25px 20px 30px 20px !important;  /* EXTRA BOTTOM PADDING */
+            margin: 0;
+            background: transparent;
+            border-top: 1px solid #e2e8f0;
         }
     </style>
 </head>
@@ -140,7 +290,7 @@ $categories = [
         <div class="modal" id="selectedItemsModal">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h3>Order Summary</h3>
+                    <h3>🛒 Order Summary</h3>
                     <div class="school-name"><?php echo htmlspecialchars($schoolName); ?></div>
                     <span class="close" onclick="closeSelectedItemsModal()">&times;</span>
                 </div>
@@ -149,15 +299,12 @@ $categories = [
                     <!-- Items will be populated by JavaScript -->
                 </div>
                 
-                <div class="modal-actions">
-                    <button type="button" class="clear-selection-btn" onclick="clearAllSelections()" id="clearBtn" style="display: none;">
-                        🗑️ Clear All Selections
+                <div class="modal-actions" style="display: flex; gap: 15px; justify-content: center; padding: 20px;">
+                    <button type="button" class="continue-shopping-btn" onclick="closeSelectedItemsModal()">
+                        🛍️ Continue Shopping
                     </button>
-                    <button class="action-btn cancel-btn" onclick="closeSelectedItemsModal()">
-                        Continue Selecting
-                    </button>
-                    <button type="submit" form="itemsForm" class="action-btn proceed-btn" id="confirmProceedBtn">
-                        Proceed to Bill
+                    <button type="submit" form="itemsForm" class="pay-bill-btn" id="confirmProceedBtn">
+                        💳 Pay Bill
                     </button>
                 </div>
             </div>
@@ -174,8 +321,9 @@ $categories = [
             
             <div class="categories-grid" id="categoriesGrid">
                 <?php foreach ($categories as $key => $category): ?>
-                    <div class="category-card <?php echo !empty($category['sizes']) ? '' : 'disabled'; ?>" 
-                         onclick="showSizeModal('<?php echo $key; ?>', '<?php echo $category['name']; ?>', '<?php echo $category['icon']; ?>')">
+                    <div class="category-card <?php echo !empty($category['sizes']) ? '' : 'disabled'; ?> <?php echo isset($selectedSizes[$key]) && $selectedSizes[$key] ? 'has-selection' : ''; ?>" 
+                         onclick="showSizeModal('<?php echo $key; ?>', '<?php echo $category['name']; ?>', '<?php echo $category['icon']; ?>')"
+                         style="position: relative;">
                         <div class="category-icon"><?php echo $category['icon']; ?></div>
                         <div class="category-name"><?php echo $category['name']; ?></div>
                         <?php if (isset($selectedSizes[$key]) && $selectedSizes[$key]): ?>
@@ -185,21 +333,28 @@ $categories = [
                 <?php endforeach; ?>
             </div>
 
-            <!-- MAIN ACTION BUTTONS -->
+            <!-- VISIBLE BOTTOM BUTTONS -->
             <div class="actions">
                 <a href="dashboard.php" class="back-btn">← Back to Schools</a>
-                <button type="button" class="next-btn" id="proceedBtn" onclick="showSelectedItemsModal()" <?php echo count(array_filter($selectedSizes)) == 0 ? 'disabled' : ''; ?>>
-                    <?php $selectedCount = count(array_filter($selectedSizes)); echo $selectedCount == 0 ? 'Proceed to Bill' : 'Proceed to Bill (' . $selectedCount . ' items)'; ?>
+                <button type="button" class="next-btn" id="proceedBtn" onclick="showSelectedItemsModal()">
+                    💳 Pay Bill (<?php 
+                        $totalSelected = 0;
+                        foreach ($selectedSizes as $selection) {
+                            if ($selection) $totalSelected += substr_count($selection, ',') + 1;
+                        }
+                        echo $totalSelected ?: 0; 
+                    ?> items)
                 </button>
             </div>
         </form>
     </div>
 
     <script>
+        // **LOAD PERSISTENT SELECTIONS** from PHP
         let selectedSizes = <?php echo json_encode($selectedSizes); ?>;
         const categoriesData = <?php echo json_encode($categories); ?>;
         let currentCategoryKey = '';
-        let currentCategorySelections = {}; // Track selections per category
+        let currentCategorySelections = {};
 
         function showSizeModal(categoryKey, categoryName, categoryIcon) {
             currentCategoryKey = categoryKey;
@@ -211,16 +366,12 @@ $categories = [
             modalTitle.textContent = `Select ${categoryName} Size`;
             modalIcon.textContent = categoryIcon;
             
-            // Initialize selections for this category
+            // **LOAD PREVIOUS SELECTIONS** for this category
             currentCategorySelections = {};
             if (selectedSizes[categoryKey]) {
-                if (categoryKey === 'tracksuits') {
-                    selectedSizes[categoryKey].split(',').forEach(item => {
-                        currentCategorySelections[item] = true;
-                    });
-                } else {
-                    currentCategorySelections[selectedSizes[categoryKey]] = true;
-                }
+                selectedSizes[categoryKey].split(',').forEach(item => {
+                    currentCategorySelections[item] = true;
+                });
             }
             
             sizesGrid.innerHTML = '';
@@ -229,17 +380,13 @@ $categories = [
             if (sizes.length === 0) {
                 sizesGrid.innerHTML = '<div class="no-sizes">No sizes available</div>';
             } else {
-                // Group sizes by section
                 const sections = {};
                 sizes.forEach(sizeData => {
                     const section = sizeData.section || 'Default';
-                    if (!sections[section]) {
-                        sections[section] = [];
-                    }
+                    if (!sections[section]) sections[section] = [];
                     sections[section].push(sizeData);
                 });
                 
-                // Create section headers and sizes
                 Object.keys(sections).sort().forEach(sectionName => {
                     if (Object.keys(sections).length > 1) {
                         const sectionHeader = document.createElement('div');
@@ -272,9 +419,7 @@ $categories = [
                             <div class="size-price">Rs. ${parseFloat(price).toLocaleString()}</div>
                         `;
                         
-                        // Multiple selection for ALL categories
                         sizeBtn.onclick = () => toggleSizeSelection(categoryKey, sizeKey, sizeBtn);
-                        
                         sizesGrid.appendChild(sizeBtn);
                     });
                 });
@@ -291,7 +436,7 @@ $categories = [
                 delete currentCategorySelections[sizeKey];
             }
             
-            // Update main selection
+            // **AUTO-SAVE** to session immediately
             if (Object.keys(currentCategorySelections).length > 0) {
                 selectedSizes[categoryKey] = Object.keys(currentCategorySelections).join(',');
             } else {
@@ -300,12 +445,12 @@ $categories = [
             
             document.getElementById(`selected_${categoryKey}`).value = selectedSizes[categoryKey] || '';
             updateCategoryCard(categoryKey);
+            saveToSession(); // **SAVES TO PHP SESSION**
         }
 
         function closeSizeModal() {
             document.getElementById('sizeModal').style.display = 'none';
             updateProceedButton();
-            saveToSession();
         }
 
         function updateCategoryCard(categoryKey) {
@@ -339,36 +484,43 @@ $categories = [
             
             if (selectedCount === 0) {
                 proceedBtn.disabled = true;
-                proceedBtn.style.opacity = '0.5';
-                proceedBtn.innerHTML = 'Proceed to Bill';
+                proceedBtn.style.opacity = '0.6';
+                proceedBtn.innerHTML = '💳 Pay Bill';
             } else {
                 proceedBtn.disabled = false;
                 proceedBtn.style.opacity = '1';
-                proceedBtn.innerHTML = `Proceed to Bill (${selectedCount} items)`;
+                proceedBtn.innerHTML = `💳 Pay Bill (${selectedCount} items)`;
             }
         }
 
-        function clearAllSelections() {
-            if (confirm('Are you sure you want to clear ALL selections?')) {
-                Object.keys(selectedSizes).forEach(key => {
-                    selectedSizes[key] = '';
-                    document.getElementById(`selected_${key}`).value = '';
-                });
-                
-                document.querySelectorAll('.selected-indicator').forEach(indicator => indicator.remove());
-                updateProceedButton();
-                saveToSession();
-                closeSelectedItemsModal();
-            }
+        // **CRITICAL: AUTO-SAVE to PHP SESSION**
+        function saveToSession() {
+            const formData = new FormData();
+            formData.append('save_session', '1');
+            Object.entries(selectedSizes).forEach(([key, value]) => {
+                if (value) {
+                    formData.append(`selected_sizes[${key}]`, value);
+                }
+            });
+            
+            fetch(window.location.href, { 
+                method: 'POST', 
+                body: formData 
+            }).then(response => response.json())
+              .then(data => {
+                  console.log('✅ Selections saved');
+              }).catch(error => {
+                  console.error('❌ Save error:', error);
+              });
         }
 
         function showSelectedItemsModal() {
             const modal = document.getElementById('selectedItemsModal');
             const itemsList = document.getElementById('selectedItemsList');
-            const clearBtn = document.getElementById('clearBtn');
             
             itemsList.innerHTML = '';
             let totalAmount = 0;
+            let itemCount = 0;
             
             for (const [categoryKey, selection] of Object.entries(selectedSizes)) {
                 if (selection) {
@@ -383,8 +535,9 @@ $categories = [
                         );
                         
                         if (sizeData) {
-                            const price = sizeData.display_price || 0;
-                            totalAmount += parseFloat(price);
+                            const price = parseFloat(sizeData.display_price || 0);
+                            totalAmount += price;
+                            itemCount++;
                             
                             const itemDiv = document.createElement('div');
                             itemDiv.className = 'selected-item';
@@ -393,7 +546,7 @@ $categories = [
                                     <span class="item-name">${category.name}${section ? ` - ${section}` : ''}</span>
                                     <span class="item-size">Size: ${size}</span>
                                 </div>
-                                <div class="item-price">Rs. ${parseFloat(price).toLocaleString()}</div>
+                                <div class="item-price">Rs. ${price.toLocaleString()}</div>
                             `;
                             itemsList.appendChild(itemDiv);
                         }
@@ -401,24 +554,23 @@ $categories = [
                 }
             }
             
-            if (itemsList.children.length === 0) {
-                itemsList.innerHTML = '<div class="no-items">No items selected yet</div>';
-                clearBtn.style.display = 'none';
+            if (itemCount === 0) {
+                itemsList.innerHTML = '<div class="no-items" style="text-align: center; padding: 40px; font-size: 1.1rem; color: #666;">No items selected yet</div>';
             } else {
                 const totalDiv = document.createElement('div');
                 totalDiv.style.cssText = `
                     background: linear-gradient(135deg, #27ae60, #2ecc71);
                     color: white;
-                    padding: 20px;
+                    padding: 18px 20px;
                     border-radius: 15px;
-                    margin-top: 15px;
+                    margin: 15px 0 0 0;  /* REMOVED -20px BOTTOM */
                     text-align: center;
                     font-size: 1.3rem;
                     font-weight: 700;
-                `;
-                totalDiv.innerHTML = `💰 Total: Rs. ${totalAmount.toLocaleString()}`;
+                    box-shadow: 0 4px 15px rgba(46, 204, 113, 0.2);
+                    `;
+                totalDiv.innerHTML = `💰 TOTAL: Rs. ${totalAmount.toLocaleString()} (${itemCount} items)`;
                 itemsList.appendChild(totalDiv);
-                clearBtn.style.display = 'inline-block';
             }
             
             modal.style.display = 'flex';
@@ -428,16 +580,12 @@ $categories = [
             document.getElementById('selectedItemsModal').style.display = 'none';
         }
 
-        function saveToSession() {
-            const formData = new FormData();
-            formData.append('save_session', '1');
-            Object.entries(selectedSizes).forEach(([key, value]) => {
-                if (value) {
-                    formData.append(`selected_sizes[${key}]`, value);
-                }
-            });
-            fetch('', { method: 'POST', body: formData });
-        }
+        // **AUTO-SAVE every 5 seconds** (backup protection)
+        setInterval(() => {
+            if (Object.values(selectedSizes).some(val => val)) {
+                saveToSession();
+            }
+        }, 5000);
 
         // Initialize
         updateProceedButton();
