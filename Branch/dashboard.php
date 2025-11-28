@@ -10,9 +10,12 @@ try {
 
 if ($_POST['select_school'] ?? '') {
     $schoolId = $_POST['school_id'] ?? 0;
+    $schoolName = $_POST['school_name'] ?? 'Other';
+    
     if ($schoolId !== null) {
         session_start();
         $_SESSION['selected_school_id'] = $schoolId;
+        $_SESSION['selected_school_name'] = $schoolName;
         header("Location: select_items.php");
         exit();
     }
@@ -43,21 +46,18 @@ if ($_POST['select_school'] ?? '') {
         <form method="POST" id="schoolForm">
             <input type="hidden" name="select_school" value="1">
             <input type="hidden" name="school_id" id="selectedSchoolId">
+            <input type="hidden" name="school_name" id="selectedSchoolName">
             
             <div class="schools-grid" id="schoolsGrid">
                 <?php foreach ($schools as $school): ?>
-                    <div class="school-card" onclick="selectSchool(<?php echo $school['id']; ?>, this)">
+                    <div class="school-card" onclick="selectSchool(<?php echo $school['id']; ?>, '<?php echo htmlspecialchars($school['name']); ?>', this)">
                         <div class="school-name"><?php echo htmlspecialchars($school['name']); ?></div>
                     </div>
                 <?php endforeach; ?>
                 
-                <div class="school-card other-card" onclick="selectSchool(0, this)">
+                <div class="school-card other-card" onclick="selectSchool(0, 'Other', this)">
                     <div class="school-name">Other</div>
                 </div>
-            </div>
-
-            <div class="proceed-section">
-                <button type="submit" class="proceed-btn" id="proceedBtn" disabled>Proceed to Items</button>
             </div>
         </form>
     </div>
@@ -65,7 +65,7 @@ if ($_POST['select_school'] ?? '') {
     <script>
         let selectedCard = null;
 
-        function selectSchool(schoolId, card) {
+        function selectSchool(schoolId, schoolName, card) {
             // Remove previous selection
             if (selectedCard) {
                 selectedCard.classList.remove('selected');
@@ -75,13 +75,14 @@ if ($_POST['select_school'] ?? '') {
             selectedCard = card;
             card.classList.add('selected');
             
-            // Set hidden input with school ID
+            // Set hidden inputs
             document.getElementById('selectedSchoolId').value = schoolId;
+            document.getElementById('selectedSchoolName').value = schoolName;
             
-            // Enable proceed button
-            const proceedBtn = document.getElementById('proceedBtn');
-            proceedBtn.disabled = false;
-            proceedBtn.innerHTML = '✅ Proceed to Items';
+            // Auto-submit form after 500ms
+            setTimeout(() => {
+                document.getElementById('schoolForm').submit();
+            }, 500);
         }
 
         // Search functionality

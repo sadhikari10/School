@@ -260,3 +260,60 @@ body {
         flex-direction: column;
     }
 }
+/* Add this to the existing select_items.css in the .actions section */
+
+.actions {
+    display: flex;
+    justify-content: space-between;
+    gap: 20px;
+    max-width: 600px;
+    margin: 40px auto 40px;
+}
+
+.back-btn, .next-btn {
+    flex: 1;
+    padding: 18px 30px;
+    border-radius: 50px;
+    font-size: 1.1rem;
+    font-weight: 600;
+    text-decoration: none;
+    text-align: center;
+    transition: all 0.3s ease;
+    display: inline-block;
+    border: none;
+    cursor: pointer;
+}
+
+.back-btn {
+    background: #95a5a6;
+    color: white;
+}
+
+.back-btn:hover {
+    background: #7f8c8d;
+    transform: translateY(-2px);
+}
+
+.next-btn {
+    background: linear-gradient(135deg, #27ae60, #2ecc71);
+    color: white;
+    text-decoration: none;
+    box-shadow: 0 10px 25px rgba(46, 204, 113, 0.3);
+}
+
+.next-btn:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 15px 35px rgba(46, 204, 113, 0.4);
+}
+
+.next-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+#proceedBtn:disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
