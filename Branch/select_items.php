@@ -19,6 +19,13 @@ require_once 'shoe_selector.php';
 $schoolId = $_SESSION['selected_school_id'] ?? 0;
 $schoolName = $_SESSION['selected_school_name'] ?? 'Other';
 
+// **CLEAR ALL SELECTIONS** via POST (no URL params)
+if (isset($_POST['clear_selections']) && $_POST['clear_selections'] === '1') {
+    $_SESSION['selected_sizes'] = [];
+    header('Location: dashboard.php');
+    exit;
+}
+
 // **LOAD selections from SESSION** (persistent across reloads)
 if (!isset($_SESSION['selected_sizes'])) {
     $_SESSION['selected_sizes'] = [];
@@ -63,223 +70,6 @@ $categories = [
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Select Sizes - Uniform Shop</title>
     <link rel="stylesheet" href="select_items.css">
-    <style>
-        /* Scroll for pants/skirts/tracksuits */
-        .sizes-grid {
-            max-height: 60vh;
-            overflow-y: auto;
-            padding: 10px;
-            scrollbar-width: thin;
-            scrollbar-color: #667eea #f1f5f9;
-        }
-        .sizes-grid::-webkit-scrollbar {
-            width: 6px;
-        }
-        .sizes-grid::-webkit-scrollbar-track {
-            background: #f1f5f9;
-            border-radius: 10px;
-        }
-        .sizes-grid::-webkit-scrollbar-thumb {
-            background: #667eea;
-            border-radius: 10px;
-        }
-        .sizes-grid::-webkit-scrollbar-thumb:hover {
-            background: #5a67d8;
-        }
-        
-        /* Order summary modal */
-        .selected-items-list {
-            max-height: 60vh;
-            overflow-y: auto;
-            padding-right: 10px;
-            scrollbar-width: thin;
-            scrollbar-color: #27ae60 #f1f5f9;
-        }
-        .selected-items-list::-webkit-scrollbar {
-            width: 6px;
-        }
-        .selected-items-list::-webkit-scrollbar-track {
-            background: #f1f5f9;
-            border-radius: 10px;
-        }
-        .selected-items-list::-webkit-scrollbar-thumb {
-            background: #27ae60;
-            border-radius: 10px;
-        }
-        .selected-items-list::-webkit-scrollbar-thumb:hover {
-            background: #219a52;
-        }
-        
-        /* Selected item styling */
-        .selected-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px 16px;
-            margin-bottom: 10px;
-            background: #f8f9ff;
-            border: 2px solid #e1e8ff;
-            border-radius: 12px;
-            font-size: 0.95rem;
-            transition: all 0.3s ease;
-        }
-        .selected-item:hover {
-            background: #f0f4ff;
-            border-color: #667eea;
-            transform: translateX(5px);
-        }
-        .item-details {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-        }
-        .item-name {
-            font-weight: 600;
-            color: #2d3748;
-            font-size: 0.95rem;
-        }
-        .item-size {
-            color: #718096;
-            font-size: 0.85rem;
-        }
-        .item-price {
-            font-weight: 700;
-            color: #27ae60;
-            font-size: 1rem;
-        }
-        
-        /* Continue shopping button */
-        .continue-shopping-btn {
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 12px;
-            font-size: 1rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
-            margin-right: 10px;
-        }
-        .continue-shopping-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
-        }
-        
-        /* Bottom buttons visibility */
-        .actions {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 25px 20px;
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            margin-top: 30px;
-            border-radius: 20px;
-            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
-            position: relative;
-            z-index: 10;
-        }
-        .back-btn {
-            background: rgba(255, 255, 255, 0.2);
-            color: white;
-            padding: 14px 24px;
-            border-radius: 12px;
-            text-decoration: none;
-            font-weight: 600;
-            font-size: 1.05rem;
-            transition: all 0.3s ease;
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-        }
-        .back-btn:hover {
-            background: rgba(255, 255, 255, 0.3);
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
-        }
-        .next-btn {
-            background: linear-gradient(135deg, #27ae60, #2ecc71);
-            color: white;
-            border: none;
-            padding: 16px 32px;
-            border-radius: 15px;
-            font-size: 1.1rem;
-            font-weight: 700;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            box-shadow: 0 6px 20px rgba(46, 204, 113, 0.3);
-        }
-        .next-btn:hover:not(:disabled) {
-            transform: translateY(-3px);
-            box-shadow: 0 10px 30px rgba(46, 204, 113, 0.4);
-        }
-        .next-btn:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-        }
-        
-        /* Pay bill button */
-        .pay-bill-btn {
-            background: linear-gradient(135deg, #e74c3c, #c0392b);
-            color: white;
-            border: none;
-            padding: 16px 32px;
-            border-radius: 15px;
-            font-size: 1.1rem;
-            font-weight: 700;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            box-shadow: 0 6px 20px rgba(231, 76, 60, 0.3);
-        }
-        .pay-bill-btn:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 10px 30px rgba(231, 76, 60, 0.4);
-        }
-        
-        /* Selected indicator */
-        .selected-indicator {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            background: #27ae60;
-            color: white;
-            width: 24px;
-            height: 24px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 0.9rem;
-            font-weight: bold;
-            box-shadow: 0 4px 12px rgba(39, 174, 96, 0.4);
-        }
-        /* FIXED: Modal actions - No more cropping */
-        .modal-actions {
-    display: flex;
-    gap: 15px;
-    justify-content: center;
-    padding: 20px;
-    width: 100%;
-    box-sizing: border-box;
-    flex-wrap: wrap; /* important fix */
-}
-
-.continue-shopping-btn,
-.pay-bill-btn {
-    padding: 10px 16px;
-    font-size: 0.95rem;
-    border-radius: 8px;
-}
-
-#selectedItemsModal .modal-content {
-    height: auto;
-    max-height: 95vh;     /* increase modal height */
-    padding: 20px;        /* reduce padding so buttons fit */
-    box-sizing: border-box;
-}
-
-
-    </style>
 </head>
 <body>
     <div class="container">
@@ -315,7 +105,7 @@ $categories = [
                     <!-- Items will be populated by JavaScript -->
                 </div>
                 
-                <div class="modal-actions" style="display: flex; gap: 15px; justify-content: center; padding: 20px;">
+                <div class="modal-actions">
                     <button type="button" class="continue-shopping-btn" onclick="closeSelectedItemsModal()">
                         🛍️ Continue Shopping
                     </button>
@@ -325,6 +115,33 @@ $categories = [
                 </div>
             </div>
         </div>
+
+        <!-- **CUSTOM CONFIRMATION POPUP** -->
+        <div class="confirm-modal" id="confirmClearModal">
+            <div class="confirm-content">
+                <div class="confirm-header">
+                    <span class="confirm-icon">🗑️</span>
+                    <h3>Clear All Selections?</h3>
+                </div>
+                <div class="confirm-body">
+                    <p>You have selected items. This action will <strong>clear everything</strong> and return you to the schools list.</p>
+                    <p class="confirm-warning">This cannot be undone!</p>
+                </div>
+                <div class="confirm-actions">
+                    <button type="button" class="confirm-cancel-btn" onclick="closeConfirmModal()">
+                        ❌ Cancel
+                    </button>
+                    <button type="button" class="confirm-clear-btn" onclick="confirmClearSelections()">
+                        ✅ Yes, Clear All
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- HIDDEN FORM FOR CLEARING SELECTIONS -->
+        <form method="POST" id="clearForm" style="display: none;">
+            <input type="hidden" name="clear_selections" value="1">
+        </form>
 
         <!-- MAIN FORM -->
         <form method="POST" action="bill.php" id="itemsForm">
@@ -337,7 +154,7 @@ $categories = [
             
             <div class="categories-grid" id="categoriesGrid">
                 <?php foreach ($categories as $key => $category): ?>
-                    <div class="category-card <?php echo !empty($category['sizes']) ? '' : 'disabled'; ?> <?php echo isset($selectedSizes[$key]) && $selectedSizes[$key] ? 'has-selection' : ''; ?>" 
+                    <div class="category-card <?php echo !empty($category['sizes']) ? '' : 'disabled'; ?>" 
                          onclick="showSizeModal('<?php echo $key; ?>', '<?php echo $category['name']; ?>', '<?php echo $category['icon']; ?>')"
                          style="position: relative;">
                         <div class="category-icon"><?php echo $category['icon']; ?></div>
@@ -351,7 +168,9 @@ $categories = [
 
             <!-- VISIBLE BOTTOM BUTTONS -->
             <div class="actions">
-                <a href="dashboard.php" class="back-btn">← Back to Schools</a>
+                <button type="button" class="back-btn" onclick="checkAndShowConfirmModal()" title="Return to schools">
+                    ← Back to Schools
+                </button>
                 <button type="button" class="next-btn" id="proceedBtn" onclick="showSelectedItemsModal()">
                     💳 Pay Bill (<?php 
                         $totalSelected = 0;
@@ -371,6 +190,57 @@ $categories = [
         const categoriesData = <?php echo json_encode($categories); ?>;
         let currentCategoryKey = '';
         let currentCategorySelections = {};
+
+        // **CHECK IF NEEDS CONFIRMATION AND SHOW MODAL**
+        function checkAndShowConfirmModal() {
+            const hasSelections = Object.values(selectedSizes).some(val => val);
+            if (hasSelections) {
+                document.getElementById('confirmClearModal').style.display = 'flex';
+            } else {
+                // No selections, clear immediately
+                clearAllSelectionsAndRedirect();
+            }
+        }
+
+        // **CLOSE CONFIRMATION MODAL**
+        function closeConfirmModal() {
+            document.getElementById('confirmClearModal').style.display = 'none';
+        }
+
+        // **CONFIRM CLEAR AND PROCEED**
+        function confirmClearSelections() {
+            closeConfirmModal();
+            clearAllSelectionsAndRedirect();
+        }
+
+        // **CLEAR ALL SELECTIONS AND REDIRECT** (ORIGINAL UI BEHAVIOR)
+        function clearAllSelectionsAndRedirect() {
+            // Clear JavaScript object immediately
+            selectedSizes = {};
+            
+            // Clear all hidden form inputs
+            const hiddenInputs = document.querySelectorAll('input[name^="selected_sizes"]');
+            hiddenInputs.forEach(input => {
+                input.value = '';
+            });
+            
+            // Remove all selection indicators (ORIGINAL BEHAVIOR)
+            const categoryCards = document.querySelectorAll('.category-card');
+            categoryCards.forEach(card => {
+                const indicator = card.querySelector('.selected-indicator');
+                if (indicator) indicator.remove();
+            });
+            
+            // Update proceed button
+            updateProceedButton();
+            
+            console.log('🗑️ All selections cleared!');
+            
+            // Submit hidden form to clear PHP SESSION and redirect
+            document.getElementById('clearForm').submit();
+            
+            return false;
+        }
 
         function showSizeModal(categoryKey, categoryName, categoryIcon) {
             currentCategoryKey = categoryKey;
@@ -469,6 +339,7 @@ $categories = [
             updateProceedButton();
         }
 
+        // **ORIGINAL UI BEHAVIOR - Only add/remove ✓ indicator**
         function updateCategoryCard(categoryKey) {
             const categoryCards = document.querySelectorAll('.category-card');
             categoryCards.forEach(card => {
@@ -574,17 +445,7 @@ $categories = [
                 itemsList.innerHTML = '<div class="no-items" style="text-align: center; padding: 40px; font-size: 1.1rem; color: #666;">No items selected yet</div>';
             } else {
                 const totalDiv = document.createElement('div');
-                totalDiv.style.cssText = `
-                    background: linear-gradient(135deg, #27ae60, #2ecc71);
-                    color: white;
-                    padding: 18px 20px;
-                    border-radius: 15px;
-                    margin: 15px 0 0 0;  /* REMOVED -20px BOTTOM */
-                    text-align: center;
-                    font-size: 1.3rem;
-                    font-weight: 700;
-                    box-shadow: 0 4px 15px rgba(46, 204, 113, 0.2);
-                    `;
+                totalDiv.className = 'total-summary';
                 totalDiv.innerHTML = `💰 TOTAL: Rs. ${totalAmount.toLocaleString()} (${itemCount} items)`;
                 itemsList.appendChild(totalDiv);
             }
