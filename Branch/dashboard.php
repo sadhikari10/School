@@ -1,4 +1,12 @@
 <?php
+session_start(); // Start session
+
+// Check if user is logged in
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login.php");
+    exit();
+}
+
 require_once '../Common/connection.php';
 
 try {
@@ -13,7 +21,6 @@ if ($_POST['select_school'] ?? '') {
     $schoolName = $_POST['school_name'] ?? 'Other';
     
     if ($schoolId !== null) {
-        session_start();
         $_SESSION['selected_school_id'] = $schoolId;
         $_SESSION['selected_school_name'] = $schoolName;
         header("Location: select_items.php");
@@ -29,8 +36,37 @@ if ($_POST['select_school'] ?? '') {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>School Selection Dashboard</title>
     <link rel="stylesheet" href="dashboard.css">
+    <style>
+        /* Only logout button styles */
+        .logout-container {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+        }
+        .logout-btn {
+            background: #e74c3c;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .logout-btn:hover {
+            background: #c0392b;
+        }
+    </style>
 </head>
 <body>
+    <!-- Logout button - top right -->
+    <div class="logout-container">
+        <a href="logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
+            Logout
+        </a>
+    </div>
+
     <div class="dashboard-container">
         <div class="header">
             <h1>🏫 Select Your School</h1>
