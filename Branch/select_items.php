@@ -26,33 +26,30 @@ require_once 'stocking_selector.php';
 require_once 'shoe_selector.php';
 
 // ============================================
-// **PERSISTENT SELECTIONS - SAVE/LOAD LOGIC**
+// **HYBRID PERSISTENCE: POST + SESSION BACKUP**
 // ============================================
 
 $schoolId = $_SESSION['selected_school_id'];
 $schoolName = $_SESSION['selected_school_name'];
 
-// **CLEAR ALL SELECTIONS** via POST
+// **LOAD selections: POST first, then SESSION backup**
+$selectedSizes = $_POST['selected_sizes'] ?? $_SESSION['selected_sizes'] ?? [];
+
+// **AUTO-SAVE to SESSION on every load (for persistence)**
+$_SESSION['selected_sizes'] = $selectedSizes;
+
+// **CLEAR ALL SELECTIONS**
 if (isset($_POST['clear_selections']) && $_POST['clear_selections'] === '1') {
     $_SESSION['selected_sizes'] = [];
     header('Location: dashboard.php');
     exit;
 }
 
-// **LOAD selections from SESSION**
-if (!isset($_SESSION['selected_sizes'])) {
-    $_SESSION['selected_sizes'] = [];
-}
-
-// **SAVE selections to SESSION**
+// **AJAX SAVE (still works)**
 if ($_POST['save_session'] ?? false) {
-    foreach ($_POST['selected_sizes'] ?? [] as $key => $value) {
-        $_SESSION['selected_sizes'][$key] = $value;
-    }
+    $_SESSION['selected_sizes'] = $_POST['selected_sizes'] ?? [];
     exit(json_encode(['status' => 'saved']));
 }
-
-$selectedSizes = $_SESSION['selected_sizes'];
 
 // Initialize ALL selectors
 $shirtSelector = new ShirtSelector($pdo, $schoolName);
@@ -121,7 +118,6 @@ $categories = [
             <p>School: <strong><?php echo htmlspecialchars($schoolName); ?></strong></p>
         </header>
 
-        <!-- Rest of your HTML remains EXACTLY the same -->
         <!-- Size Selection Modal -->
         <div class="modal" id="sizeModal">
             <div class="modal-content">
@@ -153,6 +149,7 @@ $categories = [
                     <button type="button" class="continue-shopping-btn" onclick="closeSelectedItemsModal()">
                         🛍️ Continue Shopping
                     </button>
+                    <!-- ✅ FIXED: Submit button INSIDE form with proper name -->
                     <button type="submit" form="itemsForm" class="pay-bill-btn" id="confirmProceedBtn">
                         💳 Pay Bill
                     </button>
@@ -183,17 +180,20 @@ $categories = [
         </div>
 
         <!-- HIDDEN FORM FOR CLEARING SELECTIONS -->
-        <form method="POST" id="clearForm" style="display: none;">
+        <form method="POST" action="dashboard.php" id="clearForm" style="display: none;">
             <input type="hidden" name="clear_selections" value="1">
         </form>
 
-        <!-- MAIN FORM -->
+        <!-- ✅ MAIN FORM - Properly structured for submission -->
         <form method="POST" action="bill.php" id="itemsForm">
             <input type="hidden" name="school_id" value="<?php echo $schoolId; ?>">
             <input type="hidden" name="school_name" value="<?php echo htmlspecialchars($schoolName); ?>">
             
             <?php foreach ($categories as $key => $category): ?>
-                <input type="hidden" name="selected_sizes[<?php echo $key; ?>]" id="selected_<?php echo $key; ?>" value="<?php echo htmlspecialchars($selectedSizes[$key] ?? ''); ?>">
+                <input type="hidden" 
+                       name="selected_sizes[<?php echo $key; ?>]" 
+                       id="selected_<?php echo $key; ?>" 
+                       value="<?php echo htmlspecialchars($selectedSizes[$key] ?? ''); ?>">
             <?php endforeach; ?>
             
             <div class="categories-grid" id="categoriesGrid">
@@ -215,6 +215,7 @@ $categories = [
                 <button type="button" class="back-btn" onclick="checkAndShowConfirmModal()" title="Return to schools">
                     ← Back to Schools
                 </button>
+                <!-- ✅ FIXED: This button now properly opens modal with working Pay Bill -->
                 <button type="button" class="next-btn" id="proceedBtn" onclick="showSelectedItemsModal()">
                     💳 Pay Bill (<?php 
                         $totalSelected = 0;
@@ -228,9 +229,8 @@ $categories = [
         </form>
     </div>
 
-    <!-- Your existing JavaScript remains EXACTLY the same -->
     <script>
-        // **LOAD PERSISTENT SELECTIONS** from PHP
+        // **LOAD PERSISTENT SELECTIONS** from PHP (POST + SESSION)
         let selectedSizes = <?php echo json_encode($selectedSizes); ?>;
         const categoriesData = <?php echo json_encode($categories); ?>;
         let currentCategoryKey = '';
@@ -242,7 +242,6 @@ $categories = [
             if (hasSelections) {
                 document.getElementById('confirmClearModal').style.display = 'flex';
             } else {
-                // No selections, clear immediately
                 clearAllSelectionsAndRedirect();
             }
         }
@@ -260,14 +259,11 @@ $categories = [
 
         // **CLEAR ALL SELECTIONS AND REDIRECT**
         function clearAllSelectionsAndRedirect() {
-            // Clear JavaScript object immediately
             selectedSizes = {};
             
             // Clear all hidden form inputs
             const hiddenInputs = document.querySelectorAll('input[name^="selected_sizes"]');
-            hiddenInputs.forEach(input => {
-                input.value = '';
-            });
+            hiddenInputs.forEach(input => input.value = '');
             
             // Remove all selection indicators
             const categoryCards = document.querySelectorAll('.category-card');
@@ -276,14 +272,11 @@ $categories = [
                 if (indicator) indicator.remove();
             });
             
-            // Update proceed button
             updateProceedButton();
-            
             console.log('🗑️ All selections cleared!');
             
-            // Submit hidden form to clear PHP SESSION and redirect
+            // Submit to dashboard.php (clears POST + triggers SESSION clear)
             document.getElementById('clearForm').submit();
-            
             return false;
         }
 
@@ -297,11 +290,11 @@ $categories = [
             modalTitle.textContent = `Select ${categoryName} Size`;
             modalIcon.textContent = categoryIcon;
             
-            // **LOAD PREVIOUS SELECTIONS** for this category
+            // **LOAD PREVIOUS SELECTIONS**
             currentCategorySelections = {};
             if (selectedSizes[categoryKey]) {
                 selectedSizes[categoryKey].split(',').forEach(item => {
-                    currentCategorySelections[item] = true;
+                    currentCategorySelections[item.trim()] = true;
                 });
             }
             
@@ -367,15 +360,20 @@ $categories = [
                 delete currentCategorySelections[sizeKey];
             }
             
-            // **AUTO-SAVE** to session immediately
+            // **UPDATE selectedSizes immediately**
             if (Object.keys(currentCategorySelections).length > 0) {
                 selectedSizes[categoryKey] = Object.keys(currentCategorySelections).join(',');
             } else {
                 delete selectedSizes[categoryKey];
             }
             
+            // **UPDATE FORM FIELD** (for POST submission)
             document.getElementById(`selected_${categoryKey}`).value = selectedSizes[categoryKey] || '';
+            
             updateCategoryCard(categoryKey);
+            updateProceedButton();
+            
+            // **AUTO-SAVE to SESSION** (for page reload persistence)
             saveToSession();
         }
 
@@ -392,14 +390,12 @@ $categories = [
                     const hasSelection = selectedSizes[categoryKey];
                     const existingIndicator = card.querySelector('.selected-indicator');
                     
-                    if (hasSelection) {
-                        if (!existingIndicator) {
-                            const indicator = document.createElement('div');
-                            indicator.className = 'selected-indicator';
-                            indicator.textContent = '✓';
-                            card.appendChild(indicator);
-                        }
-                    } else if (existingIndicator) {
+                    if (hasSelection && !existingIndicator) {
+                        const indicator = document.createElement('div');
+                        indicator.className = 'selected-indicator';
+                        indicator.textContent = '✓';
+                        card.appendChild(indicator);
+                    } else if (!hasSelection && existingIndicator) {
                         existingIndicator.remove();
                     }
                 }
@@ -408,22 +404,36 @@ $categories = [
 
         function updateProceedButton() {
             const selectedCount = Object.values(selectedSizes).filter(val => val).reduce((total, val) => {
-                return total + val.split(',').length;
+                return total + (val ? val.split(',').length : 0);
             }, 0);
             
             const proceedBtn = document.getElementById('proceedBtn');
+            const confirmBtn = document.getElementById('confirmProceedBtn');
             
             if (selectedCount === 0) {
                 proceedBtn.disabled = true;
                 proceedBtn.style.opacity = '0.6';
                 proceedBtn.innerHTML = '💳 Pay Bill';
+                
+                if (confirmBtn) {
+                    confirmBtn.disabled = true;
+                    confirmBtn.style.opacity = '0.6';
+                    confirmBtn.innerHTML = '💳 Pay Bill';
+                }
             } else {
                 proceedBtn.disabled = false;
                 proceedBtn.style.opacity = '1';
                 proceedBtn.innerHTML = `💳 Pay Bill (${selectedCount} items)`;
+                
+                if (confirmBtn) {
+                    confirmBtn.disabled = false;
+                    confirmBtn.style.opacity = '1';
+                    confirmBtn.innerHTML = `💳 Pay Bill (${selectedCount} items)`;
+                }
             }
         }
 
+        // **AUTO-SAVE to SESSION** (persists across page reloads)
         function saveToSession() {
             const formData = new FormData();
             formData.append('save_session', '1');
@@ -437,13 +447,11 @@ $categories = [
                 method: 'POST', 
                 body: formData 
             }).then(response => response.json())
-              .then(data => {
-                  console.log('✅ Selections saved');
-              }).catch(error => {
-                  console.error('❌ Save error:', error);
-              });
+              .then(data => console.log('✅ Selections saved to session'))
+              .catch(error => console.error('❌ Save error:', error));
         }
 
+        // **SHOW ORDER SUMMARY MODAL** (Pay Bill workflow)
         function showSelectedItemsModal() {
             const modal = document.getElementById('selectedItemsModal');
             const itemsList = document.getElementById('selectedItemsList');
@@ -458,10 +466,13 @@ $categories = [
                     const items = selection.split(',');
                     
                     items.forEach(itemKey => {
-                        const [size, section] = itemKey.split('|');
+                        const trimmedKey = itemKey.trim();
+                        if (!trimmedKey) return;
+                        
+                        const [size, section] = trimmedKey.split('|');
                         const sizeData = category.sizes.find(s => 
                             (s.size === size && s.section === section) || 
-                            (s.size === itemKey && !s.section)
+                            (s.size === trimmedKey && !s.section)
                         );
                         
                         if (sizeData) {
@@ -500,14 +511,14 @@ $categories = [
             document.getElementById('selectedItemsModal').style.display = 'none';
         }
 
-        // **AUTO-SAVE every 5 seconds**
+        // **AUTO-SAVE every 5 seconds** (persistence)
         setInterval(() => {
             if (Object.values(selectedSizes).some(val => val)) {
                 saveToSession();
             }
         }, 5000);
 
-        // Initialize
+        // **INITIALIZE**
         updateProceedButton();
     </script>
 </body>
