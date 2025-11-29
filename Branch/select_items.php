@@ -1,5 +1,18 @@
 <?php
 session_start();
+
+// **CRITICAL: Check if user is logged in**
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login.php");
+    exit();
+}
+
+// **CRITICAL: Check if school is selected**
+if (!isset($_SESSION['selected_school_id']) || !isset($_SESSION['selected_school_name'])) {
+    header("Location: dashboard.php");
+    exit();
+}
+
 require_once '../Common/connection.php';
 
 // Include ALL selectors
@@ -16,22 +29,22 @@ require_once 'shoe_selector.php';
 // **PERSISTENT SELECTIONS - SAVE/LOAD LOGIC**
 // ============================================
 
-$schoolId = $_SESSION['selected_school_id'] ?? 0;
-$schoolName = $_SESSION['selected_school_name'] ?? 'Other';
+$schoolId = $_SESSION['selected_school_id'];
+$schoolName = $_SESSION['selected_school_name'];
 
-// **CLEAR ALL SELECTIONS** via POST (no URL params)
+// **CLEAR ALL SELECTIONS** via POST
 if (isset($_POST['clear_selections']) && $_POST['clear_selections'] === '1') {
     $_SESSION['selected_sizes'] = [];
     header('Location: dashboard.php');
     exit;
 }
 
-// **LOAD selections from SESSION** (persistent across reloads)
+// **LOAD selections from SESSION**
 if (!isset($_SESSION['selected_sizes'])) {
     $_SESSION['selected_sizes'] = [];
 }
 
-// **SAVE selections to SESSION** when form submitted
+// **SAVE selections to SESSION**
 if ($_POST['save_session'] ?? false) {
     foreach ($_POST['selected_sizes'] ?? [] as $key => $value) {
         $_SESSION['selected_sizes'][$key] = $value;
@@ -70,14 +83,45 @@ $categories = [
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Select Sizes - Uniform Shop</title>
     <link rel="stylesheet" href="select_items.css">
+    <style>
+        /* Logout button - top right */
+        .logout-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+        }
+        .logout-btn {
+            background: #e74c3c;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+            font-weight: bold;
+        }
+        .logout-btn:hover {
+            background: #c0392b;
+        }
+    </style>
 </head>
 <body>
+    <!-- Logout button - top right -->
+    <div class="logout-container">
+        <a href="logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
+            Logout
+        </a>
+    </div>
+
     <div class="container">
         <header class="header">
             <h1>👕 Select Item Sizes</h1>
             <p>School: <strong><?php echo htmlspecialchars($schoolName); ?></strong></p>
         </header>
 
+        <!-- Rest of your HTML remains EXACTLY the same -->
         <!-- Size Selection Modal -->
         <div class="modal" id="sizeModal">
             <div class="modal-content">
@@ -184,6 +228,7 @@ $categories = [
         </form>
     </div>
 
+    <!-- Your existing JavaScript remains EXACTLY the same -->
     <script>
         // **LOAD PERSISTENT SELECTIONS** from PHP
         let selectedSizes = <?php echo json_encode($selectedSizes); ?>;
@@ -213,7 +258,7 @@ $categories = [
             clearAllSelectionsAndRedirect();
         }
 
-        // **CLEAR ALL SELECTIONS AND REDIRECT** (ORIGINAL UI BEHAVIOR)
+        // **CLEAR ALL SELECTIONS AND REDIRECT**
         function clearAllSelectionsAndRedirect() {
             // Clear JavaScript object immediately
             selectedSizes = {};
@@ -224,7 +269,7 @@ $categories = [
                 input.value = '';
             });
             
-            // Remove all selection indicators (ORIGINAL BEHAVIOR)
+            // Remove all selection indicators
             const categoryCards = document.querySelectorAll('.category-card');
             categoryCards.forEach(card => {
                 const indicator = card.querySelector('.selected-indicator');
@@ -331,7 +376,7 @@ $categories = [
             
             document.getElementById(`selected_${categoryKey}`).value = selectedSizes[categoryKey] || '';
             updateCategoryCard(categoryKey);
-            saveToSession(); // **SAVES TO PHP SESSION**
+            saveToSession();
         }
 
         function closeSizeModal() {
@@ -339,7 +384,6 @@ $categories = [
             updateProceedButton();
         }
 
-        // **ORIGINAL UI BEHAVIOR - Only add/remove ✓ indicator**
         function updateCategoryCard(categoryKey) {
             const categoryCards = document.querySelectorAll('.category-card');
             categoryCards.forEach(card => {
@@ -380,7 +424,6 @@ $categories = [
             }
         }
 
-        // **CRITICAL: AUTO-SAVE to PHP SESSION**
         function saveToSession() {
             const formData = new FormData();
             formData.append('save_session', '1');
@@ -457,7 +500,7 @@ $categories = [
             document.getElementById('selectedItemsModal').style.display = 'none';
         }
 
-        // **AUTO-SAVE every 5 seconds** (backup protection)
+        // **AUTO-SAVE every 5 seconds**
         setInterval(() => {
             if (Object.values(selectedSizes).some(val => val)) {
                 saveToSession();

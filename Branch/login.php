@@ -175,19 +175,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             border: 1px solid #c6f6d5;
         }
 
-        .forgot-password {
-            display: block;
-            margin-top: 20px;
-            color: #8e44ad;
-            text-decoration: none;
-            font-size: 0.9rem;
-            transition: color 0.3s ease;
-        }
-
-        .forgot-password:hover {
-            color: #9b59b6;
-            text-decoration: underline;
-        }
 
         @media (max-width: 480px) {
             .login-container {
@@ -249,9 +236,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             </button>
         </form>
 
-        <a href="#" class="forgot-password">
-            <i class="fas fa-question-circle"></i> Forgot Password?
-        </a>
     </div>
 
     <script>
