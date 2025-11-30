@@ -263,6 +263,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
     echo json_encode(['success' => true, 'bill_details' => $bill_details]);
     exit;
 }
+
+// ✅ UNSET SESSION VARIABLES WHEN GOING TO DASHBOARD
+if (isset($_GET['clear_dashboard'])) {
+    unset($_SESSION['temp_bill_items'], $_SESSION['temp_subtotal'], $_SESSION['temp_school_name'], $_SESSION['temp_items_json']);
+    header('Location: dashboard.php');
+    exit;
+}
 ?>
 
 <!DOCTYPE html>
@@ -306,45 +313,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
         }
         th, td { 
             border: none !important; 
-            padding: 4px 2px; 
+            padding: 6px 2px;
             font-size: 11px;
             background: white;
+            vertical-align: top !important; /* ✅ CHANGED TO TOP FOR VERTICAL ALIGNMENT */
+            height: 24px;
         }
         /* ✅ LINE UNDER HEADERS ONLY */
         th { 
             border-bottom: 2px solid #000; 
             font-weight: bold; 
             text-align: center; 
-            padding-bottom: 6px;
+            padding-bottom: 8px;
+            vertical-align: top !important; /* ✅ CHANGED TO TOP FOR VERTICAL ALIGNMENT */
+            height: 24px;
         }
-        /* ✅ LINE UNDER EACH ITEM */
+        /* ✅ NO LINES UNDER ITEMS */
         tbody tr { 
-            border-bottom: 1px solid #000; 
+            border: none !important;
         }
         th:first-child, td:first-child { width: 10%; text-align: center; }
-        th:nth-child(2), td:nth-child(2) { width: 40%; }
-        th:nth-child(3), td:nth-child(3) { width: 25%; }
+        th:nth-child(2), td:nth-child(2) { width: 40%; text-align: left !important; /* ✅ EXPLICIT LEFT ALIGN FOR NAME */ }
+        th:nth-child(3), td:nth-child(3) { width: 25%; text-align: left !important; /* ✅ EXPLICIT LEFT ALIGN FOR SIZE */ }
         th:last-child, td:last-child { width: 25%; text-align: right; }
         
         .total-row { 
-            border-top: 3px double #000 !important; 
-            border-bottom: 2px solid #000 !important;
+            border-top: 1px dotted #000 !important; 
+            border-bottom: 1px dotted #000 !important; /* ✅ CHANGED TO DOTTED LIKE CUSTOMER NAME */
             font-weight: bold; 
             font-size: 12px;
-            padding-top: 6px !important;
+            padding: 8px 2px !important;
+            vertical-align: middle !important;
+            height: 24px;
+            position: relative;
         }
         .footer { 
             margin-top: 15px; 
-            border-top: 2px dashed #000;
             padding-top: 10px;
         }
-        .footer p { margin: 4px 0; font-size: 11px; }
+        .footer p { 
+            margin: 4px 0; 
+            font-size: 11px; 
+            white-space: nowrap;
+            overflow: hidden;
+        }
         .amount-words { 
             font-weight: bold; 
             font-style: italic;
-            border-bottom: 1px dotted #000;
             padding-bottom: 5px;
             margin-bottom: 8px;
+            white-space: normal !important; /* ✅ ALLOW MULTIPLE LINES */
+            line-height: 1.3;
         }
         /* ✅ NO UNDERLINE FOR CUSTOMER NAME */
         .customer-name { 
@@ -353,6 +372,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
             height: 20px;
             border-bottom: none !important;
             background: transparent;
+        }
+        .dotted-line {
+            border-bottom: 1px dotted #000;
+            margin: 5px 0;
         }
         .non-official { 
             text-align: center; 
@@ -378,6 +401,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
         .btn-primary { background: #007bff; }
         .btn-secondary { background: #6c757d; }
         .btn-warning { background: #ffc107; color: #000; }
+        .btn-info { background: #17a2b8; }
         .form-group { margin-bottom: 15px; text-align: center; }
         .form-select { 
             padding: 8px 12px; 
@@ -386,6 +410,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
             font-size: 12px;
             width: 200px;
         }
+        th:first-child, td:first-child { width: 10%; text-align: center; }
+        th:nth-child(2), td:nth-child(2) { width: 60%; text-align: left !important; }
+        th:nth-child(3), td:nth-child(3) { width: 10%; text-align: left !important; }
+        th:last-child, td:last-child { width: 20%; text-align: right; }
+
         @media print { .no-print { display: none !important; } }
         @page { margin: 5mm; }
     </style>
@@ -404,6 +433,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
             <p><strong>Bill No:</strong> <span id="billNoDisplay"><?php echo $bill_no_display; ?></span></p>
             <p><strong>Date:</strong> <span id="printTime"><?php echo $printed_date_display; ?></span></p>
             <p><strong>Customer Name:</strong> <span class="customer-name"></span></p>
+            <div class="dotted-line"></div> <!-- ✅ DOTTED LINE AFTER CUSTOMER NAME -->
         </div>
 
         <!-- ITEMS TABLE - CLEAN FORMAT -->
@@ -423,7 +453,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
                             <td><?php echo $index + 1; ?>.</td>
                             <td><?php echo htmlspecialchars($item['name']); ?><?php echo !empty($item['section']) ? ' - ' . htmlspecialchars($item['section']) : ''; ?></td>
                             <td><?php echo htmlspecialchars($item['size']); ?></td>
-                            <td style="text-align: right;">Rs. <?php echo number_format($item['price'], 2); ?></td>
+                            <td style="text-align: right;"><?php echo number_format($item['price'], 2); ?></td> <!-- ✅ RS. REMOVED -->
                         </tr>
                     <?php endforeach; ?>
                 <?php else: ?>
@@ -433,7 +463,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
             <tfoot>
                 <tr class="total-row">
                     <td colspan="3" style="text-align: right; font-weight: bold;">TOTAL:</td>
-                    <td style="text-align: right;"><strong>Rs. <?php echo number_format($subtotal, 2); ?></strong></td>
+                    <td style="text-align: right; white-space: nowrap;"><strong>Rs. <?php echo number_format($subtotal, 2); ?></strong></td> <!-- ✅ RS. ADDED BACK TO TOTAL + NOWRAP -->
                 </tr>
             </tfoot>
         </table>
@@ -462,18 +492,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
             </select>
             <br><br>
             <?php if ($subtotal > 0): ?>
-                <button id="markPaidBtn" class="btn btn-success">✅ Mark as Paid & Generate Bill</button>
+                <button id="markPaidBtn" class="btn btn-success">✅ Mark as Paid</button>
             <?php else: ?>
                 <div style="color: red; padding: 15px;">
                     <p>❌ No items selected!</p>
-                    <p><a href="select_items.php" class="btn btn-warning">← Go back to select items</a></p>
                 </div>
             <?php endif; ?>
         </div>
+        <div id="successMessage" style="display: none; color: green; text-align: center; padding: 15px; font-weight: bold;">✅ Bill marked as paid!</div>
         <div style="margin-top: 15px;">
             <button onclick="window.print()" class="btn btn-primary">🖨️ Print Bill</button>
-            <a href="select_items.php" class="btn btn-secondary">🔄 New Order</a>
-            <a href="dashboard.php" class="btn btn-warning">🏠 Back to Dashboard</a>
+            <a href="select_items.php" class="btn btn-info">↩️ Back to Items</a>
+            <a href="?clear_dashboard=1" class="btn btn-warning">🏠 Back to Dashboard</a>
         </div>
     </div>
 
@@ -503,12 +533,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
                 document.getElementById('paymentInfo').style.display = 'block';
                 
                 btn.parentElement.style.display = 'none';
+                document.getElementById('successMessage').style.display = 'block';
                 
                 setTimeout(() => {
                     window.print();
-                    setTimeout(() => {
-                        window.location.href = 'select_items.php';
-                    }, 2000);
                 }, 1000);
             } else {
                 alert('❌ Error: ' + (data.error || 'Failed to process payment'));
