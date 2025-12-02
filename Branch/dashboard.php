@@ -60,12 +60,7 @@ if ($_POST['select_school'] ?? '') {
     </style>
 </head>
 <body>
-    <!-- Logout button - top right -->
-    <div class="logout-container">
-        <a href="logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
-            Logout
-        </a>
-    </div>
+
 
     <div class="dashboard-container">
         <div class="header">
@@ -94,6 +89,10 @@ if ($_POST['select_school'] ?? '') {
                 <div class="school-card other-card" onclick="selectSchool(0, 'Other', this)">
                     <div class="school-name">Other</div>
                 </div>
+            </div>
+            <div class="logout-section" style="margin-top:30px; display:flex; justify-content:center; gap:15px;">
+                <a href="actions.php" class="logout-btn" style="background:#667eea;">&#8592; Back</a>
+                <a href="logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">Logout</a>
             </div>
         </form>
     </div>
