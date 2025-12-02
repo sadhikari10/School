@@ -11,7 +11,7 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin' || !isset($_SESSI
 $outlet_id   = $_SESSION['selected_outlet_id'];
 $outlet_name = $_SESSION['selected_outlet_name'] ?? 'Unknown Outlet';
 
-// === SELECT SCHOOL → Go to items ===
+// === SELECT SCHOOL → Go to edit_prices.php ===
 if (isset($_POST['select_school'])) {
     $school_id = (int)$_POST['selected_school_id'];
     
@@ -22,7 +22,7 @@ if (isset($_POST['select_school'])) {
     if ($school) {
         $_SESSION['selected_school_id']   = $school['school_id'];
         $_SESSION['selected_school_name'] = $school['school_name'];
-        header("Location: school_items.php");
+        header("Location: edit_prices.php");  // ← Changed to edit_prices.php
         exit();
     }
 }
