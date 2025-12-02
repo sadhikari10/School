@@ -1,525 +1,267 @@
 <?php
 session_start();
 
-// **CRITICAL: Check if user is logged in**
 if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php");
+    header("Location: ../Common/login.php");
     exit();
 }
-
-// **CRITICAL: Check if school is selected**
 if (!isset($_SESSION['selected_school_id']) || !isset($_SESSION['selected_school_name'])) {
     header("Location: dashboard.php");
     exit();
 }
 
 require_once '../Common/connection.php';
+require_once 'UniformSelector.php';
 
-// Include ALL selectors
-require_once 'shirt_selector.php';
-require_once 'pant_selector.php';
-require_once 'skirt_selector.php';
-require_once 'coat_selector.php';
-require_once 'tracksuit_selector.php';
-require_once 'sweater_selector.php';
-require_once 'stocking_selector.php';
-require_once 'shoe_selector.php';
+$outlet_id   = $_SESSION['outlet_id'];
+$school_id   = $_SESSION['selected_school_id'];
+$school_name = $_SESSION['selected_school_name'];
 
-// ============================================
-// **HYBRID PERSISTENCE: POST + SESSION BACKUP**
-// ============================================
+$selector = new UniformSelector($pdo, $school_id, $outlet_id);
+$itemsData = $selector->getItems();
+$items = $itemsData['items'];
+$brandCount = $itemsData['brandCount'];
 
-$schoolId = $_SESSION['selected_school_id'];
-$schoolName = $_SESSION['selected_school_name'];
-
-// **LOAD selections: POST first, then SESSION backup**
 $selectedSizes = $_POST['selected_sizes'] ?? $_SESSION['selected_sizes'] ?? [];
-
-// **AUTO-SAVE to SESSION on every load (for persistence)**
 $_SESSION['selected_sizes'] = $selectedSizes;
 
-// **CLEAR ALL SELECTIONS**
-if (isset($_POST['clear_selections']) && $_POST['clear_selections'] === '1') {
+if (isset($_POST['clear_selections'])) {
     $_SESSION['selected_sizes'] = [];
-    header('Location: dashboard.php');
-    exit;
+    header("Location: dashboard.php");
+    exit();
 }
-
-// **AJAX SAVE (still works)**
 if ($_POST['save_session'] ?? false) {
     $_SESSION['selected_sizes'] = $_POST['selected_sizes'] ?? [];
     exit(json_encode(['status' => 'saved']));
 }
-
-// Initialize ALL selectors
-$shirtSelector = new ShirtSelector($pdo, $schoolName);
-$pantSelector = new PantSelector($pdo, $schoolName);
-$skirtSelector = new SkirtSelector($pdo);
-$coatSelector = new CoatSelector($pdo);
-$tracksuitSelector = new TracksuitSelector($pdo);
-$sweaterSelector = new SweaterSelector($pdo, $schoolName);
-$stockingSelector = new StockingSelector($pdo);
-$shoeSelector = new ShoeSelector($pdo);
-
-$categories = [
-    'shirts' => ['name' => 'Shirts', 'icon' => '👔', 'sizes' => $shirtSelector->getShirts()],
-    'pants' => ['name' => 'Pants', 'icon' => '👖', 'sizes' => $pantSelector->getPants()],
-    'skirts' => ['name' => 'Skirts', 'icon' => '👗', 'sizes' => $skirtSelector->getSkirts()],
-    'coats' => ['name' => 'Coats', 'icon' => '🧥', 'sizes' => $coatSelector->getCoats()],
-    'tracksuits' => ['name' => 'Tracksuits', 'icon' => '🏃‍♂️', 'sizes' => $tracksuitSelector->getTracksuits()],
-    'sweaters' => ['name' => 'Sweaters', 'icon' => '🧶', 'sizes' => $sweaterSelector->getSweaters()],
-    'stockings' => ['name' => 'Stockings', 'icon' => '🧦', 'sizes' => $stockingSelector->getStockings()],
-    'shoes' => ['name' => 'Shoes', 'icon' => '👞', 'sizes' => $shoeSelector->getShoes()]
-];
 ?>
 
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Select Sizes - Uniform Shop</title>
-    <link rel="stylesheet" href="select_items.css">
-    <style>
-        /* Logout button - top right */
-        .logout-container {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            z-index: 1000;
-        }
-        .logout-btn {
-            background: #e74c3c;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 5px;
-            cursor: pointer;
-            text-decoration: none;
-            display: inline-block;
-            font-weight: bold;
-        }
-        .logout-btn:hover {
-            background: #c0392b;
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Select Sizes - <?php echo htmlspecialchars($school_name); ?></title>
+<link rel="stylesheet" href="select_items.css">
+<style>
+.category-icon { font-family: "Segoe UI Emoji", "Apple Color Emoji", sans-serif !important; font-size: 4.8rem; margin-bottom: 12px; }
+.selected-indicator { position: absolute; top: 10px; right: 10px; background: #27ae60; color: white; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: bold; box-shadow: 0 4px 12px rgba(39,174,96,0.4); animation: pop 0.3s ease; }
+@keyframes pop { 0% { transform: scale(0); } 80% { transform: scale(1.2); } 100% { transform: scale(1); } }
+.category-card { position: relative; padding: 32px 20px; border-radius: 24px; background: white; box-shadow: 0 10px 30px rgba(0,0,0,0.12); transition: all 0.3s ease; cursor: pointer; text-align: center; }
+.category-card:hover { transform: translateY(-14px); box-shadow: 0 24px 60px rgba(142,68,173,0.3); }
+.category-name { font-size: 1.35rem; font-weight: 600; color: #2c3e50; margin-top: 8px; }
+
+.size-btn { padding: 12px 16px; border: 2px solid #e0e0e0; border-radius: 18px; background: #fdfdfd; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
+.size-btn.selected { border-color: #8e44ad; background: #f3e8ff; box-shadow: 0 8px 20px rgba(142,68,173,0.2); }
+.size-label { font-size: 1.2rem; font-weight: bold; color: #333; }
+.size-price { font-size: 1.1rem; color: #27ae60; font-weight: bold; margin-left: 8px; }
+.qty-controls { display: flex; align-items: center; }
+.qty-controls button { background: #8e44ad; color: #fff; border: none; border-radius: 50%; width: 28px; height: 28px; margin: 0 6px; cursor: pointer; font-size: 1.1rem; line-height: 1; }
+.qty-count { min-width: 24px; text-align: center; font-weight: bold; }
+.modal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.4); align-items:center; justify-content:center; z-index:1000; }
+.modal-content { background:#fff; padding:24px; border-radius:16px; width:90%; max-width:500px; max-height:80%; overflow-y:auto; }
+.modal-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
+.modal-header .modal-icon { font-size:3rem; }
+.modal-actions { margin-top:20px; text-align:right; }
+.modal-actions button { padding:12px 20px; margin-left:12px; border:none; border-radius:8px; cursor:pointer; font-weight:bold; }
+.continue-shopping-btn { background:#f3e8ff; color:#8e44ad; }
+.pay-bill-btn { background:#8e44ad; color:#fff; }
+.confirm-modal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.4); align-items:center; justify-content:center; z-index:1100; }
+.confirm-content { background:#fff; padding:24px; border-radius:16px; width:90%; max-width:400px; text-align:center; }
+</style>
 </head>
 <body>
-    <!-- Logout button - top right -->
-    <div class="logout-container">
-        <a href="logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
-            Logout
-        </a>
+
+<div class="container">
+<header class="header">
+    <h1>Select Item Sizes</h1>
+    <p>School: <strong style="color:#8e44ad; font-size:1.4rem;"><?php echo htmlspecialchars($school_name); ?></strong></p>
+</header>
+
+<form method="POST" action="bill.php" id="itemsForm">
+<input type="hidden" name="school_id" value="<?php echo $school_id; ?>">
+<input type="hidden" name="school_name" value="<?php echo htmlspecialchars($school_name); ?>">
+
+<?php foreach ($items as $item_name => $sizes): 
+    $safe_key = preg_replace('/[^a-zA-Z0-9]/', '_', $item_name);
+?>
+    <input type="hidden" name="selected_sizes[<?php echo $safe_key; ?>]" id="selected_<?php echo $safe_key; ?>" value="<?php echo htmlspecialchars($selectedSizes[$safe_key] ?? ''); ?>">
+<?php endforeach; ?>
+
+<div class="categories-grid">
+<?php foreach ($items as $item_name => $sizes): 
+    $safe_key = preg_replace('/[^a-zA-Z0-9]/', '_', $item_name);
+    $hasSelection = !empty($selectedSizes[$safe_key]);
+?>
+    <div class="category-card" onclick="showSizeModal('<?php echo $safe_key; ?>', '<?php echo htmlspecialchars(addslashes($item_name)); ?>', '<?php echo $selector->getEmoji($item_name); ?>')">
+        <div class="category-icon"><?php echo $selector->getEmoji($item_name); ?></div>
+        <div class="category-name"><?php echo htmlspecialchars($item_name); ?></div>
+        <?php if ($hasSelection): ?>
+            <div class="selected-indicator">✔</div>
+        <?php endif; ?>
     </div>
+<?php endforeach; ?>
+</div>
 
-    <div class="container">
-        <header class="header">
-            <h1>👕 Select Item Sizes</h1>
-            <p>School: <strong><?php echo htmlspecialchars($schoolName); ?></strong></p>
-        </header>
+<div class="actions">
+    <button type="button" class="back-btn" onclick="checkAndShowConfirmModal()">Back to Schools</button>
+    <button type="button" class="next-btn" onclick="showSelectedItemsModal()">
+        Pay Bill (0 items)
+    </button>
+</div>
+</form>
 
-        <!-- Size Selection Modal -->
-        <div class="modal" id="sizeModal">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <span class="modal-icon" id="modalIcon"></span>
-                    <h3 id="modalTitle">Select Size</h3>
-                    <button type="button" class="back-btn-modal" onclick="closeSizeModal()">← Back</button>
-                </div>
-                <div class="sizes-grid" id="sizesGrid">
-                    <!-- Sizes will be populated by JavaScript -->
-                </div>
-            </div>
+<!-- Size Modal -->
+<div class="modal" id="sizeModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <span class="modal-icon" id="modalIcon"></span>
+            <h3 id="modalTitle"></h3>
+            <button type="button" class="back-btn-modal" onclick="closeSizeModal()">Back</button>
         </div>
-
-        <!-- Selected Items Preview Modal -->
-        <div class="modal" id="selectedItemsModal">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h3>🛒 Order Summary</h3>
-                    <div class="school-name"><?php echo htmlspecialchars($schoolName); ?></div>
-                    <span class="close" onclick="closeSelectedItemsModal()">&times;</span>
-                </div>
-                
-                <div class="selected-items-list" id="selectedItemsList">
-                    <!-- Items will be populated by JavaScript -->
-                </div>
-                
-                <div class="modal-actions">
-                    <button type="button" class="continue-shopping-btn" onclick="closeSelectedItemsModal()">
-                        🛍️ Continue Shopping
-                    </button>
-                    <!-- ✅ FIXED: Submit button INSIDE form with proper name -->
-                    <button type="submit" form="itemsForm" class="pay-bill-btn" id="confirmProceedBtn">
-                        💳 Pay Bill
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <!-- **CUSTOM CONFIRMATION POPUP** -->
-        <div class="confirm-modal" id="confirmClearModal">
-            <div class="confirm-content">
-                <div class="confirm-header">
-                    <span class="confirm-icon">🗑️</span>
-                    <h3>Clear All Selections?</h3>
-                </div>
-                <div class="confirm-body">
-                    <p>You have selected items. This action will <strong>clear everything</strong> and return you to the schools list.</p>
-                    <p class="confirm-warning">This cannot be undone!</p>
-                </div>
-                <div class="confirm-actions">
-                    <button type="button" class="confirm-cancel-btn" onclick="closeConfirmModal()">
-                        ❌ Cancel
-                    </button>
-                    <button type="button" class="confirm-clear-btn" onclick="confirmClearSelections()">
-                        ✅ Yes, Clear All
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <!-- HIDDEN FORM FOR CLEARING SELECTIONS -->
-        <form method="POST" action="dashboard.php" id="clearForm" style="display: none;">
-            <input type="hidden" name="clear_selections" value="1">
-        </form>
-
-        <!-- ✅ MAIN FORM - Properly structured for submission -->
-        <form method="POST" action="bill.php" id="itemsForm">
-            <input type="hidden" name="school_id" value="<?php echo $schoolId; ?>">
-            <input type="hidden" name="school_name" value="<?php echo htmlspecialchars($schoolName); ?>">
-            
-            <?php foreach ($categories as $key => $category): ?>
-                <input type="hidden" 
-                       name="selected_sizes[<?php echo $key; ?>]" 
-                       id="selected_<?php echo $key; ?>" 
-                       value="<?php echo htmlspecialchars($selectedSizes[$key] ?? ''); ?>">
-            <?php endforeach; ?>
-            
-            <div class="categories-grid" id="categoriesGrid">
-                <?php foreach ($categories as $key => $category): ?>
-                    <div class="category-card <?php echo !empty($category['sizes']) ? '' : 'disabled'; ?>" 
-                         onclick="showSizeModal('<?php echo $key; ?>', '<?php echo $category['name']; ?>', '<?php echo $category['icon']; ?>')"
-                         style="position: relative;">
-                        <div class="category-icon"><?php echo $category['icon']; ?></div>
-                        <div class="category-name"><?php echo $category['name']; ?></div>
-                        <?php if (isset($selectedSizes[$key]) && $selectedSizes[$key]): ?>
-                            <div class="selected-indicator">✓</div>
-                        <?php endif; ?>
-                    </div>
-                <?php endforeach; ?>
-            </div>
-
-            <!-- VISIBLE BOTTOM BUTTONS -->
-            <div class="actions">
-                <button type="button" class="back-btn" onclick="checkAndShowConfirmModal()" title="Return to schools">
-                    ← Back to Schools
-                </button>
-                <!-- ✅ FIXED: This button now properly opens modal with working Pay Bill -->
-                <button type="button" class="next-btn" id="proceedBtn" onclick="showSelectedItemsModal()">
-                    💳 Pay Bill (<?php 
-                        $totalSelected = 0;
-                        foreach ($selectedSizes as $selection) {
-                            if ($selection) $totalSelected += substr_count($selection, ',') + 1;
-                        }
-                        echo $totalSelected ?: 0; 
-                    ?> items)
-                </button>
-            </div>
-        </form>
+        <div id="sizesGrid"></div>
     </div>
+</div>
 
-    <script>
-        // **LOAD PERSISTENT SELECTIONS** from PHP (POST + SESSION)
-        let selectedSizes = <?php echo json_encode($selectedSizes); ?>;
-        const categoriesData = <?php echo json_encode($categories); ?>;
-        let currentCategoryKey = '';
-        let currentCategorySelections = {};
+<!-- Order Summary Modal -->
+<div class="modal" id="selectedItemsModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Order Summary</h3>
+            <span class="close" onclick="closeSelectedItemsModal()">×</span>
+        </div>
+        <div class="selected-items-list" id="selectedItemsList"></div>
+        <div class="modal-actions">
+            <button type="button" class="continue-shopping-btn" onclick="closeSelectedItemsModal()">Continue Shopping</button>
+            <button type="submit" form="itemsForm" class="pay-bill-btn">Pay Bill</button>
+        </div>
+    </div>
+</div>
 
-        // **CHECK IF NEEDS CONFIRMATION AND SHOW MODAL**
-        function checkAndShowConfirmModal() {
-            const hasSelections = Object.values(selectedSizes).some(val => val);
-            if (hasSelections) {
-                document.getElementById('confirmClearModal').style.display = 'flex';
-            } else {
-                clearAllSelectionsAndRedirect();
-            }
-        }
+<!-- Confirm Clear Modal -->
+<div class="confirm-modal" id="confirmClearModal">
+    <div class="confirm-content">
+        <h3>Clear All Selections?</h3>
+        <p>This will remove all selected items.</p>
+        <button type="button" onclick="closeConfirmModal()">Cancel</button>
+        <button type="button" onclick="confirmClearSelections()">Yes, Clear</button>
+    </div>
+</div>
 
-        // **CLOSE CONFIRMATION MODAL**
-        function closeConfirmModal() {
-            document.getElementById('confirmClearModal').style.display = 'none';
-        }
+<form method="POST" id="clearForm" style="display:none;">
+    <input type="hidden" name="clear_selections" value="1">
+</form>
 
-        // **CONFIRM CLEAR AND PROCEED**
-        function confirmClearSelections() {
-            closeConfirmModal();
-            clearAllSelectionsAndRedirect();
-        }
+<script>
+const allItems = <?php echo json_encode($items); ?>;
+let selectedSizes = <?php echo json_encode($selectedSizes); ?>;
 
-        // **CLEAR ALL SELECTIONS AND REDIRECT**
-        function clearAllSelectionsAndRedirect() {
-            selectedSizes = {};
-            
-            // Clear all hidden form inputs
-            const hiddenInputs = document.querySelectorAll('input[name^="selected_sizes"]');
-            hiddenInputs.forEach(input => input.value = '');
-            
-            // Remove all selection indicators
-            const categoryCards = document.querySelectorAll('.category-card');
-            categoryCards.forEach(card => {
-                const indicator = card.querySelector('.selected-indicator');
-                if (indicator) indicator.remove();
-            });
-            
-            updateProceedButton();
-            console.log('🗑️ All selections cleared!');
-            
-            // Submit to dashboard.php (clears POST + triggers SESSION clear)
-            document.getElementById('clearForm').submit();
-            return false;
-        }
+function getItemNameFromKey(key) {
+    return Object.keys(allItems).find(name => name.replace(/[^a-zA-Z0-9]/g,'_') === key);
+}
 
-        function showSizeModal(categoryKey, categoryName, categoryIcon) {
-            currentCategoryKey = categoryKey;
-            const modal = document.getElementById('sizeModal');
-            const modalTitle = document.getElementById('modalTitle');
-            const modalIcon = document.getElementById('modalIcon');
-            const sizesGrid = document.getElementById('sizesGrid');
-            
-            modalTitle.textContent = `Select ${categoryName} Size`;
-            modalIcon.textContent = categoryIcon;
-            
-            // **LOAD PREVIOUS SELECTIONS**
-            currentCategorySelections = {};
-            if (selectedSizes[categoryKey]) {
-                selectedSizes[categoryKey].split(',').forEach(item => {
-                    currentCategorySelections[item.trim()] = true;
-                });
-            }
-            
-            sizesGrid.innerHTML = '';
-            const sizes = categoriesData[categoryKey].sizes;
-            
-            if (sizes.length === 0) {
-                sizesGrid.innerHTML = '<div class="no-sizes">No sizes available</div>';
-            } else {
-                const sections = {};
-                sizes.forEach(sizeData => {
-                    const section = sizeData.section || 'Default';
-                    if (!sections[section]) sections[section] = [];
-                    sections[section].push(sizeData);
-                });
-                
-                Object.keys(sections).sort().forEach(sectionName => {
-                    if (Object.keys(sections).length > 1) {
-                        const sectionHeader = document.createElement('div');
-                        sectionHeader.style.cssText = `
-                            grid-column: 1 / -1;
-                            background: linear-gradient(135deg, #667eea, #764ba2);
-                            color: white;
-                            padding: 15px;
-                            border-radius: 10px;
-                            font-weight: 700;
-                            font-size: 1.1rem;
-                            text-align: center;
-                            margin-bottom: 15px;
-                            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-                        `;
-                        sectionHeader.innerHTML = `<strong>${sectionName}</strong>`;
-                        sizesGrid.appendChild(sectionHeader);
-                    }
-                    
-                    sections[sectionName].forEach(sizeData => {
-                        const sizeKey = sizeData.section ? `${sizeData.size}|${sizeData.section}` : sizeData.size;
-                        const isSelected = currentCategorySelections[sizeKey];
-                        
-                        const sizeBtn = document.createElement('div');
-                        sizeBtn.className = `size-btn ${isSelected ? 'selected' : ''}`;
-                        const price = sizeData.display_price || 0;
-                        
-                        sizeBtn.innerHTML = `
-                            <div class="size-label">${sizeData.size}</div>
-                            <div class="size-price">Rs. ${parseFloat(price).toLocaleString()}</div>
-                        `;
-                        
-                        sizeBtn.onclick = () => toggleSizeSelection(categoryKey, sizeKey, sizeBtn);
-                        sizesGrid.appendChild(sizeBtn);
-                    });
-                });
-            }
-            
-            modal.style.display = 'flex';
-        }
+function showSizeModal(key, name, emoji) {
+    document.getElementById('modalIcon').textContent = emoji;
+    document.getElementById('modalTitle').textContent = name;
+    const grid = document.getElementById('sizesGrid');
+    grid.innerHTML = '';
 
-        function toggleSizeSelection(categoryKey, sizeKey, button) {
-            button.classList.toggle('selected');
-            if (button.classList.contains('selected')) {
-                currentCategorySelections[sizeKey] = true;
-            } else {
-                delete currentCategorySelections[sizeKey];
-            }
-            
-            // **UPDATE selectedSizes immediately**
-            if (Object.keys(currentCategorySelections).length > 0) {
-                selectedSizes[categoryKey] = Object.keys(currentCategorySelections).join(',');
-            } else {
-                delete selectedSizes[categoryKey];
-            }
-            
-            // **UPDATE FORM FIELD** (for POST submission)
-            document.getElementById(`selected_${categoryKey}`).value = selectedSizes[categoryKey] || '';
-            
-            updateCategoryCard(categoryKey);
-            updateProceedButton();
-            
-            // **AUTO-SAVE to SESSION** (for page reload persistence)
-            saveToSession();
-        }
+    const sizes = allItems[name] || [];
+    if (sizes.length === 0) {
+        grid.innerHTML = '<div style="text-align:center;padding:60px;color:#999;">No prices available</div>';
+        document.getElementById('sizeModal').style.display = 'flex';
+        return;
+    }
 
-        function closeSizeModal() {
-            document.getElementById('sizeModal').style.display = 'none';
-            updateProceedButton();
-        }
+    sizes.forEach(s => {
+        const code = s.size + '|' + s.brand;
+        const count = (selectedSizes[key]?.split(',').filter(x => x === code).length) || 0;
 
-        function updateCategoryCard(categoryKey) {
-            const categoryCards = document.querySelectorAll('.category-card');
-            categoryCards.forEach(card => {
-                const onclickAttr = card.getAttribute('onclick');
-                if (onclickAttr && onclickAttr.includes(categoryKey)) {
-                    const hasSelection = selectedSizes[categoryKey];
-                    const existingIndicator = card.querySelector('.selected-indicator');
-                    
-                    if (hasSelection && !existingIndicator) {
-                        const indicator = document.createElement('div');
-                        indicator.className = 'selected-indicator';
-                        indicator.textContent = '✓';
-                        card.appendChild(indicator);
-                    } else if (!hasSelection && existingIndicator) {
-                        existingIndicator.remove();
-                    }
-                }
-            });
-        }
+        const btn = document.createElement('div');
+        btn.className = 'size-btn' + (count > 0 ? ' selected' : '');
+        btn.innerHTML = `
+            <span class="size-label">${s.size}</span>
+            <span class="size-price">Rs. ${Number(s.price).toLocaleString()}</span>
+            <div class="qty-controls">
+                <button type="button" onclick="decrementQty('${key}','${code}')">-</button>
+                <span class="qty-count">${count}</span>
+                <button type="button" onclick="incrementQty('${key}','${code}')">+</button>
+            </div>
+        `;
+        grid.appendChild(btn);
+    });
 
-        function updateProceedButton() {
-            const selectedCount = Object.values(selectedSizes).filter(val => val).reduce((total, val) => {
-                return total + (val ? val.split(',').length : 0);
-            }, 0);
-            
-            const proceedBtn = document.getElementById('proceedBtn');
-            const confirmBtn = document.getElementById('confirmProceedBtn');
-            
-            if (selectedCount === 0) {
-                proceedBtn.disabled = true;
-                proceedBtn.style.opacity = '0.6';
-                proceedBtn.innerHTML = '💳 Pay Bill';
-                
-                if (confirmBtn) {
-                    confirmBtn.disabled = true;
-                    confirmBtn.style.opacity = '0.6';
-                    confirmBtn.innerHTML = '💳 Pay Bill';
-                }
-            } else {
-                proceedBtn.disabled = false;
-                proceedBtn.style.opacity = '1';
-                proceedBtn.innerHTML = `💳 Pay Bill (${selectedCount} items)`;
-                
-                if (confirmBtn) {
-                    confirmBtn.disabled = false;
-                    confirmBtn.style.opacity = '1';
-                    confirmBtn.innerHTML = `💳 Pay Bill (${selectedCount} items)`;
-                }
-            }
-        }
+    document.getElementById('sizeModal').style.display = 'flex';
+}
 
-        // **AUTO-SAVE to SESSION** (persists across page reloads)
-        function saveToSession() {
-            const formData = new FormData();
-            formData.append('save_session', '1');
-            Object.entries(selectedSizes).forEach(([key, value]) => {
-                if (value) {
-                    formData.append(`selected_sizes[${key}]`, value);
-                }
-            });
-            
-            fetch(window.location.href, { 
-                method: 'POST', 
-                body: formData 
-            }).then(response => response.json())
-              .then(data => console.log('✅ Selections saved to session'))
-              .catch(error => console.error('❌ Save error:', error));
-        }
+function incrementQty(key, code) {
+    let arr = (selectedSizes[key] || '').split(',').filter(Boolean);
+    arr.push(code);
+    selectedSizes[key] = arr.join(',');
+    document.getElementById('selected_'+key).value = selectedSizes[key];
+    showSizeModal(key,getItemNameFromKey(key),allItems[getItemNameFromKey(key)][0] ? '<?php echo $selector->getEmoji("Dummy"); ?>' : '');
+    updatePayButton();
+    saveToSession();
+}
+function decrementQty(key, code) {
+    let arr = (selectedSizes[key] || '').split(',').filter(Boolean);
+    const idx = arr.indexOf(code);
+    if(idx!==-1) arr.splice(idx,1);
+    selectedSizes[key] = arr.join(',');
+    if(!selectedSizes[key]) delete selectedSizes[key];
+    document.getElementById('selected_'+key).value = selectedSizes[key] || '';
+    showSizeModal(key,getItemNameFromKey(key),allItems[getItemNameFromKey(key)][0] ? '<?php echo $selector->getEmoji("Dummy"); ?>' : '');
+    updatePayButton();
+    saveToSession();
+}
 
-        // **SHOW ORDER SUMMARY MODAL** (Pay Bill workflow)
-        function showSelectedItemsModal() {
-            const modal = document.getElementById('selectedItemsModal');
-            const itemsList = document.getElementById('selectedItemsList');
-            
-            itemsList.innerHTML = '';
-            let totalAmount = 0;
-            let itemCount = 0;
-            
-            for (const [categoryKey, selection] of Object.entries(selectedSizes)) {
-                if (selection) {
-                    const category = categoriesData[categoryKey];
-                    const items = selection.split(',');
-                    
-                    items.forEach(itemKey => {
-                        const trimmedKey = itemKey.trim();
-                        if (!trimmedKey) return;
-                        
-                        const [size, section] = trimmedKey.split('|');
-                        const sizeData = category.sizes.find(s => 
-                            (s.size === size && s.section === section) || 
-                            (s.size === trimmedKey && !s.section)
-                        );
-                        
-                        if (sizeData) {
-                            const price = parseFloat(sizeData.display_price || 0);
-                            totalAmount += price;
-                            itemCount++;
-                            
-                            const itemDiv = document.createElement('div');
-                            itemDiv.className = 'selected-item';
-                            itemDiv.innerHTML = `
-                                <div class="item-details">
-                                    <span class="item-name">${category.name}${section ? ` - ${section}` : ''}</span>
-                                    <span class="item-size">Size: ${size}</span>
-                                </div>
-                                <div class="item-price">Rs. ${price.toLocaleString()}</div>
-                            `;
-                            itemsList.appendChild(itemDiv);
-                        }
-                    });
-                }
-            }
-            
-            if (itemCount === 0) {
-                itemsList.innerHTML = '<div class="no-items" style="text-align: center; padding: 40px; font-size: 1.1rem; color: #666;">No items selected yet</div>';
-            } else {
-                const totalDiv = document.createElement('div');
-                totalDiv.className = 'total-summary';
-                totalDiv.innerHTML = `💰 TOTAL: Rs. ${totalAmount.toLocaleString()} (${itemCount} items)`;
-                itemsList.appendChild(totalDiv);
-            }
-            
-            modal.style.display = 'flex';
-        }
+function updatePayButton() {
+    let count = 0;
+    Object.values(selectedSizes).forEach(str=>{
+        if(str) count += str.split(',').filter(Boolean).length;
+    });
+    document.querySelector('.next-btn').textContent = `Pay Bill (${count} items)`;
+}
 
-        function closeSelectedItemsModal() {
-            document.getElementById('selectedItemsModal').style.display = 'none';
-        }
+function saveToSession() {
+    const fd = new FormData();
+    fd.append('save_session','1');
+    Object.entries(selectedSizes).forEach(([k,v])=> fd.append(`selected_sizes[${k}]`,v));
+    fetch('',{method:'POST',body:fd});
+}
 
-        // **AUTO-SAVE every 5 seconds** (persistence)
-        setInterval(() => {
-            if (Object.values(selectedSizes).some(val => val)) {
-                saveToSession();
-            }
-        }, 5000);
+function showSelectedItemsModal() {
+    const list = document.getElementById('selectedItemsList');
+    list.innerHTML = '';
+    let total=0;
+    Object.entries(selectedSizes).forEach(([key,codes])=>{
+        if(!codes) return;
+        const itemName = getItemNameFromKey(key);
+        if(!itemName) return;
+        codes.split(',').forEach(code=>{
+            const [size,brand]=code.split('|');
+            const item = allItems[itemName].find(i=>i.size===size && i.brand===brand);
+            if(!item) return;
+            total+=item.price;
+            list.innerHTML += `<div style="display:flex;justify-content:space-between;padding:12px;border-bottom:1px solid #eee;">
+                <div>${itemName} - ${size} (${brand})</div>
+                <div>Rs. ${item.price}</div>
+            </div>`;
+        });
+    });
+    list.innerHTML += `<div style="text-align:right;font-weight:bold;padding:12px;">TOTAL: Rs. ${total.toLocaleString()}</div>`;
+    document.getElementById('selectedItemsModal').style.display='flex';
+}
 
-        // **INITIALIZE**
-        updateProceedButton();
-    </script>
+function closeSizeModal(){document.getElementById('sizeModal').style.display='none';}
+function closeSelectedItemsModal(){document.getElementById('selectedItemsModal').style.display='none';}
+function checkAndShowConfirmModal(){if(Object.keys(selectedSizes).length>0){document.getElementById('confirmClearModal').style.display='flex';}else{location.href='dashboard.php';}}
+function closeConfirmModal(){document.getElementById('confirmClearModal').style.display='none';}
+function confirmClearSelections(){document.getElementById('clearForm').submit();}
+
+setInterval(saveToSession,7000);
+updatePayButton();
+</script>
+
 </body>
 </html>

@@ -172,7 +172,7 @@ $total_items = $total_items->fetchColumn();
 
         <div class="footer-links">
             <a href="index.php">Change Outlet</a>
-            <a href="../logout.php">Logout</a>
+            <a href="logout.php">Logout</a>
         </div>
     </div>
 </body>
