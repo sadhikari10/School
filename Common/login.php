@@ -40,7 +40,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $error_message = 'This staff account has no outlet assigned. Contact admin.';
                     } else {
                         $_SESSION['outlet_id'] = (int)$user['outlet_id'];
-                        header("Location: actions.php");  // Change to your staff dashboard if needed
+                        header("Location: ../Branch/dashboard.php");  // Change to your staff dashboard if needed
                         exit();
                     }
                 }
