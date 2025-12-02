@@ -4,7 +4,7 @@ require '../Common/connection.php';
 
 // Security: Only allow admin
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
-    header("Location: ../login.php");
+    header("Location: ../Common/login.php");
     exit();
 }
 
@@ -100,7 +100,7 @@ $outlets = $stmt->fetchAll(PDO::FETCH_ASSOC);
         </form>
 
         <div class="logout">
-            <a href="../logout.php">Logout</a>
+            <a href="logout.php">Logout</a>
         </div>
     </div>
 </body>
