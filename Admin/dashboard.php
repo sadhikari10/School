@@ -200,6 +200,12 @@ $schools = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                     <button class="btn-edit" onclick="openEditModal(<?php echo $school['school_id']; ?>, '<?php echo addslashes(htmlspecialchars($school['school_name'])); ?>')">
                                         Edit
                                     </button>
+                                    <form method="POST" style="display:inline; margin-left:8px;">
+                                        <input type="hidden" name="selected_school_id" value="<?php echo $school['school_id']; ?>">
+                                        <button type="submit" name="select_school" class="btn-edit" style="background:#27ae60;">
+                                            Select
+                                        </button>
+                                    </form>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
