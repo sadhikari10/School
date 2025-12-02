@@ -245,7 +245,7 @@ $schools = $stmt->fetchAll(PDO::FETCH_ASSOC);
             </div>
 
             <div class="links">
-                <a href="index.php">Change Outlet</a> |
+                <a href="dashboard.php">Back to dashbaord</a> |
                 <a href="../logout.php">Logout</a>
             </div>
         </div>
