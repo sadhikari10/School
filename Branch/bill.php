@@ -1,47 +1,10 @@
 <?php
-// bill.php – REAL BILL NUMBER + CLEAN FORMAT
+// bill.php - UPDATED FOR NEW order[] FORMAT
 session_start();
 require '../Common/connection.php';
 require '../Common/nepali_date.php';
 
 date_default_timezone_set('Asia/Kathmandu');
-
-function numberToWordsWithPaisa($amount) {
-    $rupees = (int)$amount;
-    $paisa = round(($amount - $rupees) * 100);
-    $ones = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
-             "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
-    $tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
-    $words = "";
-    if ($rupees == 0) $words = "Zero";
-    else {
-        $thousands = ["", "Thousand", "Million", "Billion"];
-        $i = 0;
-        do {
-            $n = $rupees % 1000;
-            if ($n != 0) $words = _convertHundreds($n, $ones, $tens) . " " . $thousands[$i] . " " . $words;
-            $rupees = (int)($rupees / 1000);
-            $i++;
-        } while ($rupees > 0);
-    }
-    $words = ucfirst(trim($words));
-    if ($paisa > 0) {
-        $paisa_words = $paisa < 20 ? $ones[$paisa] : $tens[(int)($paisa / 10)] . ($paisa % 10 ? " " . $ones[$paisa % 10] : "");
-        $words .= " Rupees and " . ucfirst($paisa_words) . " Paisa";
-    } else {
-        $words .= " Rupees";
-    }
-    return $words . " Only";
-}
-
-function _convertHundreds($n, $ones, $tens) {
-    $str = "";
-    if ($n > 99) $str .= $ones[(int)($n / 100)] . " Hundred ";
-    $n %= 100;
-    if ($n < 20) $str .= $ones[$n];
-    else $str .= $tens[(int)($n / 10)] . ($n % 10 ? " " . $ones[$n % 10] : "");
-    return trim($str);
-}
 
 if (!isset($_SESSION['user_id'])) {
     header('Location: login.php');
@@ -51,222 +14,140 @@ if (!isset($_SESSION['user_id'])) {
 $user_id = $_SESSION['user_id'];
 $username = $_SESSION['username'] ?? 'User';
 $branch = $_SESSION['branch'] ?? '';
+$outlet_id = $_SESSION['outlet_id'] ?? 0;
 
-$stmt_user = $pdo->prepare("SELECT shop_name, phone_number FROM login WHERE id = :id");
+// Fetch shop details
+$stmt_user = $pdo->prepare("SELECT shop_name FROM login WHERE id = :id");
 $stmt_user->execute([':id' => $user_id]);
-$user = $stmt_user->fetch(PDO::FETCH_ASSOC) ?: ['shop_name' => 'Clothes Store', 'phone_number' => 'N/A'];
-$shop_name = $user['shop_name'];
-$phone_number = $user['phone_number'];
-$printed_by = $username;
+$shop_name = $stmt_user->fetchColumn() ?: 'Clothes Store';
 
-// ✅ GET REAL BILL NUMBER (before processing items)
+$stmt_outlet = $pdo->prepare("SELECT phone_number, location FROM outlets WHERE outlet_id = :oid LIMIT 1");
+$stmt_outlet->execute([':oid' => $outlet_id]);
+$outlet = $stmt_outlet->fetch(PDO::FETCH_ASSOC);
+$phone_number = $outlet['phone_number'] ?? 'N/A';
+$location     = $outlet['location'] ?? 'N/A';
+$printed_by   = $username;
+
+// Bill number logic
 $print_time_db = nepali_date_time();
 $bs_parts = explode(' ', $print_time_db);
 $bs_date = $bs_parts[0];
 $fiscal_year = get_fiscal_year($bs_date);
 
-$stmt_next = $pdo->prepare("
-    SELECT COALESCE(last_bill_number, 0) + 1 as next_bill 
-    FROM bill_counter 
-    WHERE branch = :branch AND fiscal_year = :fy
-");
+$stmt_next = $pdo->prepare("SELECT COALESCE(last_bill_number, 0) + 1 as next_bill FROM bill_counter WHERE branch = :branch AND fiscal_year = :fy");
 $stmt_next->execute([':branch' => $branch, ':fy' => $fiscal_year]);
-$next_res = $stmt_next->fetch(PDO::FETCH_ASSOC);
-$bill_number = (int)($next_res['next_bill'] ?? 1);
+$bill_number = (int)($stmt_next->fetchColumn() ?: 1);
 
 $detailed_items = [];
 $subtotal = 0.0;
-$school_name = '';
+$customer_name = '';
 $items_json = '[]';
 
-// === PROCESS POST DATA ===
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['ajax_mark_paid'])) {
-    $school_name = $_POST['school_name'] ?? '';
-    $selected_sizes = $_POST['selected_sizes'] ?? [];
-    
-    error_log("Bill POST selected_sizes: " . print_r($selected_sizes, true));
-    
-    if (!empty($selected_sizes)) {
-        $category_names = [
-            'shirts' => 'Shirt',
-            'pants' => 'Pant', 
-            'skirts' => 'Skirt',
-            'coats' => 'Coat',
-            'tracksuits' => 'Tracksuit',
-            'sweaters' => 'Sweater',
-            'stockings' => 'Stocking',
-            'shoes' => 'Shoe'
-        ];
-        
-        $items_processed = [];
-        foreach ($selected_sizes as $category_key => $selection) {
-            if (empty($selection)) continue;
-            
-            $item_name = $category_names[$category_key] ?? ucfirst($category_key);
-            $items = explode(',', $selection);
-            
-            foreach ($items as $item_index => $itemKey) {
-                $itemKey = trim($itemKey);
-                if (empty($itemKey)) continue;
-                
-                // Parse size|section
-                $parts = explode('|', $itemKey);
-                $size = $parts[0];
-                $section = count($parts) > 1 ? $parts[1] : '';
-                
-                // ✅ SIMPLIFIED PRICING with error handling
-                $price = 1500.00; // Default fallback
-                
-                try {
-                    switch ($category_key) {
-                        case 'shirts':
-                            require_once 'shirt_selector.php';
-                            $selector = new ShirtSelector($pdo, $school_name);
-                            $sizes = $selector->getShirts();
-                            break;
-                        case 'pants':
-                            require_once 'pant_selector.php';
-                            $selector = new PantSelector($pdo, $school_name);
-                            $sizes = $selector->getPants();
-                            break;
-                        case 'skirts':
-                            require_once 'skirt_selector.php';
-                            $selector = new SkirtSelector($pdo);
-                            $sizes = $selector->getSkirts();
-                            break;
-                        case 'coats':
-                            require_once 'coat_selector.php';
-                            $selector = new CoatSelector($pdo);
-                            $sizes = $selector->getCoats();
-                            break;
-                        case 'tracksuits':
-                            require_once 'tracksuit_selector.php';
-                            $selector = new TracksuitSelector($pdo);
-                            $sizes = $selector->getTracksuits();
-                            break;
-                        case 'sweaters':
-                            require_once 'sweater_selector.php';
-                            $selector = new SweaterSelector($pdo, $school_name);
-                            $sizes = $selector->getSweaters();
-                            break;
-                        case 'stockings':
-                            require_once 'stocking_selector.php';
-                            $selector = new StockingSelector($pdo);
-                            $sizes = $selector->getStockings();
-                            break;
-                        case 'shoes':
-                            require_once 'shoe_selector.php';
-                            $selector = new ShoeSelector($pdo);
-                            $sizes = $selector->getShoes();
-                            break;
-                        default:
-                            $sizes = [];
-                    }
-                    
-                    // ✅ SAFE ARRAY/OBJECT ACCESS
-                    foreach ($sizes as $sizeData) {
-                        $sizeDataSize = is_object($sizeData) ? ($sizeData->size ?? '') : ($sizeData['size'] ?? '');
-                        $sizeDataSection = is_object($sizeData) ? ($sizeData->section ?? '') : ($sizeData['section'] ?? '');
-                        $sizeDataPrice = is_object($sizeData) ? ($sizeData->display_price ?? $sizeData->price ?? 0) : ($sizeData['display_price'] ?? $sizeData['price'] ?? 0);
-                        
-                        $sizeKey = $sizeDataSection ? $sizeDataSize . '|' . $sizeDataSection : $sizeDataSize;
-                        
-                        if ($sizeKey === $itemKey) {
-                            $price = (float)$sizeDataPrice;
-                            break;
-                        }
-                    }
-                } catch (Exception $e) {
-                    error_log("Price lookup error for $itemKey: " . $e->getMessage());
-                }
-                
-                $display_name = $item_name;
-                if ($section) $display_name .= " - " . $section;
-                $display_name .= " " . $size;
-                
-                $detailed_items[] = [
-                    'name' => $item_name,
-                    'size' => $size,
-                    'section' => $section,
-                    'price' => $price,
-                    'display_name' => $display_name
-                ];
-                $subtotal += $price;
-                $items_processed[] = [
-                    'name' => $display_name,
-                    'size' => $size,
-                    'price' => $price,
-                    'quantity' => 1
-                ];
-            }
+// ================================================
+// NEW: Process clean order[] array from select_items.php
+// ================================================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['ajax_mark_paid']) && !empty($_POST['order'])) {
+    $customer_name = trim($_POST['customer_name'] ?? '');
+    $order_items = $_POST['order'];
+
+    $items_processed = [];
+
+    foreach ($order_items as $item) {
+        $item_name = $item['item_name'] ?? 'Unknown Item';
+        $size      = $item['size'] ?? '';
+        $brand     = $item['brand'] ?? '';
+        $price     = (float)($item['price'] ?? 0);
+        $qty       = (int)($item['quantity'] ?? 1);
+
+        if ($price <= 0) $price = 1500.00;
+        $amount = $price * $qty;
+
+        // Format display name
+        $display_name = $item_name;
+        if ($brand && strtolower($brand) !== 'nepali' && !empty(trim($brand))) {
+            $display_name .= " - " . trim($brand);
         }
-        $items_json = json_encode($items_processed);
+
+        // Format size
+        $display_size = (empty($size) || stripos($size, 'not available') !== false) ? 'N/A' : $size;
+
+        $detailed_items[] = [
+            'name'   => $display_name,
+            'size'   => $display_size,
+            'qty'    => $qty,
+            'price'  => $price,
+            'amount' => $amount
+        ];
+
+        $subtotal += $amount;
+
+        $items_processed[] = [
+            'name'     => $display_name,
+            'size'     => $display_size,
+            'price'    => $price,
+            'quantity' => $qty
+        ];
     }
-    
+
+    $items_json = json_encode($items_processed, JSON_UNESCAPED_UNICODE);
+
+    // Store in session for print/reprint
     $_SESSION['temp_bill_items'] = $detailed_items;
     $_SESSION['temp_subtotal'] = $subtotal;
-    $_SESSION['temp_school_name'] = $school_name;
+    $_SESSION['temp_customer_name'] = $customer_name;
     $_SESSION['temp_items_json'] = $items_json;
-    $_SESSION['selected_sizes'] = []; // Clear after processing
-}
-// === LOAD TEMP DATA ===
-else {
+    $_SESSION['temp_school_name'] = $_POST['school_name'] ?? $_SESSION['selected_school_name'] ?? '';
+} else {
+    // Load from session (for reprint or back button)
     $detailed_items = $_SESSION['temp_bill_items'] ?? [];
-    $subtotal = $_SESSION['temp_subtotal'] ?? 0.0;
-    $school_name = $_SESSION['temp_school_name'] ?? '';
-    $items_json = $_SESSION['temp_items_json'] ?? '[]';
+    $subtotal       = $_SESSION['temp_subtotal'] ?? 0.0;
+    $customer_name  = $_SESSION['temp_customer_name'] ?? '';
+    $items_json     = $_SESSION['temp_items_json'] ?? '[]';
 }
 
-$amount_in_words = numberToWordsWithPaisa($subtotal);
 $printed_date_display = nepali_date_time();
 
-// ✅ ALWAYS SHOW REAL BILL NUMBER
-$bill_no_display = $bill_number;
-
-// === AJAX: Mark as Paid ===
+// ================================================
+// AJAX: Save bill to database
+// ================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
-    $payment_method = in_array($_POST['payment_method'] ?? '', ['cash', 'online']) ? $_POST['payment_method'] : 'cash';
+    $customer_name = trim($_POST['customer_name'] ?? '');
+    $advance_payment = (float)($_POST['advance_payment'] ?? 0);
+    $payment_method = $_POST['payment_method'] === 'online' ? 'online' : 'cash';
+    $school_name = $_SESSION['temp_school_name'] ?? '';
 
     if (empty($detailed_items)) {
-        echo json_encode(['success' => false, 'error' => 'No items selected']);
+        echo json_encode(['success' => false, 'error' => 'No items']);
         exit;
     }
 
-    // ✅ Bill number already generated above - use it
-    $stmt_ups = $pdo->prepare("
-        INSERT INTO bill_counter (branch, fiscal_year, last_bill_number) 
-        VALUES (:branch, :fy, :bill) 
-        ON DUPLICATE KEY UPDATE last_bill_number = :bill
-    ");
-    $stmt_ups->execute([':branch' => $branch, ':fy' => $fiscal_year, ':bill' => $bill_number]);
+    // Update bill counter
+    $pdo->prepare("INSERT INTO bill_counter (branch, fiscal_year, last_bill_number) VALUES (?, ?, ?) 
+                   ON DUPLICATE KEY UPDATE last_bill_number = VALUES(last_bill_number)")
+        ->execute([$branch, $fiscal_year, $bill_number]);
 
-    $stmt_sales = $pdo->prepare("
-        INSERT INTO sales (bill_number, branch, school_name, items_json, total_amount, payment_method, printed_by, printed_at, customer_name) 
-        VALUES (:bill, :branch, :school, :items, :total, :pm, :by, :at, '')
-    ");
-    $stmt_sales->execute([
-        ':bill' => $bill_number, ':branch' => $branch, ':school' => $school_name,
-        ':items' => $items_json, ':total' => $subtotal, ':pm' => $payment_method,
-        ':by' => $printed_by, ':at' => $print_time_db
-    ]);
+    // Insert sale record
+    $pdo->prepare("INSERT INTO sales 
+        (bill_number, branch, fiscal_year, school_name, customer_name, total, payment_method, printed_by, printed_at, bs_datetime, items_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)")
+        ->execute([$bill_number, $branch, $fiscal_year, $school_name, $customer_name, $subtotal, $payment_method, $printed_by, $print_time_db, $items_json]);
 
-    unset($_SESSION['temp_bill_items'], $_SESSION['temp_subtotal'], $_SESSION['temp_school_name'], $_SESSION['temp_items_json']);
+    // Clear temp session
+    unset($_SESSION['temp_bill_items'], $_SESSION['temp_subtotal'], $_SESSION['temp_customer_name'], $_SESSION['temp_items_json'], $_SESSION['temp_school_name']);
 
-    $bill_details = [
+    echo json_encode([
+        'success' => true,
         'bill_number' => $bill_number,
-        'printed_date_display' => $print_time_db,
-        'amount_in_words' => numberToWordsWithPaisa($subtotal),
-        'printed_by' => $printed_by,
-        'payment_method' => $payment_method
-    ];
-
-    echo json_encode(['success' => true, 'bill_details' => $bill_details]);
+        'customer' => $customer_name ?: 'Customer',
+        'advance' => $advance_payment,
+        'remaining' => $subtotal - $advance_payment
+    ]);
     exit;
 }
 
-// ✅ UNSET SESSION VARIABLES WHEN GOING TO DASHBOARD
+// Clear session for new bill
 if (isset($_GET['clear_dashboard'])) {
-    unset($_SESSION['temp_bill_items'], $_SESSION['temp_subtotal'], $_SESSION['temp_school_name'], $_SESSION['temp_items_json']);
+    unset($_SESSION['temp_bill_items'], $_SESSION['temp_subtotal'], $_SESSION['temp_customer_name'], $_SESSION['temp_items_json'], $_SESSION['temp_school_name']);
     header('Location: dashboard.php');
     exit;
 }
@@ -276,281 +157,185 @@ if (isset($_GET['clear_dashboard'])) {
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Bill #<?php echo $bill_number; ?> - <?php echo htmlspecialchars($shop_name); ?></title>
+    <title>Bill #<?php echo $bill_number; ?></title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { 
-            font-family: 'Courier New', monospace; 
-            font-size: 12px; 
-            line-height: 1.2; 
-            color: #000;
-            background: white;
-            padding: 10px;
-        }
-        .bill { 
-            max-width: 80mm; 
-            margin: 0 auto; 
-            border: 2px dashed #000;
-            padding: 15px;
-        }
-        .header { 
-            text-align: center; 
-            border-bottom: 2px dashed #000; 
-            padding-bottom: 10px; 
-            margin-bottom: 15px;
-        }
-        .header h1 { font-size: 16px; font-weight: bold; margin-bottom: 5px; }
-        .header p { margin: 2px 0; font-size: 11px; }
-        .bill-info { margin-bottom: 15px; }
-        .bill-info p { margin: 3px 0; font-size: 11px; }
-        
-        /* ✅ NO TABLE BORDERS */
-        table { 
-            width: 100%; 
-            border-collapse: collapse; 
-            margin: 15px 0;
-            border: none !important;
-        }
-        th, td { 
-            border: none !important; 
-            padding: 6px 2px;
-            font-size: 11px;
-            background: white;
-            vertical-align: top !important; /* ✅ CHANGED TO TOP FOR VERTICAL ALIGNMENT */
-            height: 24px;
-        }
-        /* ✅ LINE UNDER HEADERS ONLY */
-        th { 
-            border-bottom: 2px solid #000; 
-            font-weight: bold; 
-            text-align: center; 
-            padding-bottom: 8px;
-            vertical-align: top !important; /* ✅ CHANGED TO TOP FOR VERTICAL ALIGNMENT */
-            height: 24px;
-        }
-        /* ✅ NO LINES UNDER ITEMS */
-        tbody tr { 
-            border: none !important;
-        }
-        th:first-child, td:first-child { width: 10%; text-align: center; }
-        th:nth-child(2), td:nth-child(2) { width: 40%; text-align: left !important; /* ✅ EXPLICIT LEFT ALIGN FOR NAME */ }
-        th:nth-child(3), td:nth-child(3) { width: 25%; text-align: left !important; /* ✅ EXPLICIT LEFT ALIGN FOR SIZE */ }
-        th:last-child, td:last-child { width: 25%; text-align: right; }
-        
-        .total-row { 
-            border-top: 1px dotted #000 !important; 
-            border-bottom: 1px dotted #000 !important; /* ✅ CHANGED TO DOTTED LIKE CUSTOMER NAME */
-            font-weight: bold; 
-            font-size: 12px;
-            padding: 8px 2px !important;
-            vertical-align: middle !important;
-            height: 24px;
-            position: relative;
-        }
-        .footer { 
-            margin-top: 15px; 
-            padding-top: 10px;
-        }
-        .footer p { 
-            margin: 4px 0; 
-            font-size: 11px; 
-            white-space: nowrap;
-            overflow: hidden;
-        }
-        .amount-words { 
-            font-weight: bold; 
-            font-style: italic;
-            padding-bottom: 5px;
-            margin-bottom: 8px;
-            white-space: normal !important; /* ✅ ALLOW MULTIPLE LINES */
-            line-height: 1.3;
-        }
-        /* ✅ NO UNDERLINE FOR CUSTOMER NAME */
-        .customer-name { 
-            display: inline-block;
-            width: 200px;
-            height: 20px;
-            border-bottom: none !important;
-            background: transparent;
-        }
-        .dotted-line {
-            border-bottom: 1px dotted #000;
-            margin: 5px 0;
-        }
-        .non-official { 
-            text-align: center; 
-            font-size: 10px;
-            margin-top: 15px;
-            padding: 8px;
-            border: 1px dashed #666;
-            font-style: italic;
-        }
-        .no-print { margin-top: 20px; text-align: center; }
-        .btn { 
-            padding: 10px 20px; 
-            margin: 5px; 
-            border: none; 
-            border-radius: 4px; 
-            cursor: pointer; 
-            font-size: 12px;
-            color: white;
-            text-decoration: none;
-            display: inline-block;
-        }
-        .btn-success { background: #28a745; }
-        .btn-primary { background: #007bff; }
-        .btn-secondary { background: #6c757d; }
-        .btn-warning { background: #ffc107; color: #000; }
-        .btn-info { background: #17a2b8; }
-        .form-group { margin-bottom: 15px; text-align: center; }
-        .form-select { 
-            padding: 8px 12px; 
-            border: 1px solid #ccc; 
-            border-radius: 4px;
-            font-size: 12px;
-            width: 200px;
-        }
-        th:first-child, td:first-child { width: 10%; text-align: center; }
-        th:nth-child(2), td:nth-child(2) { width: 60%; text-align: left !important; }
-        th:nth-child(3), td:nth-child(3) { width: 10%; text-align: left !important; }
-        th:last-child, td:last-child { width: 20%; text-align: right; }
-
-        @media print { .no-print { display: none !important; } }
-        @page { margin: 5mm; }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family:'Courier New', monospace; font-size:12px; line-height:1.3; padding:10px; background:white; }
+        .bill { max-width:80mm; margin:auto; border:2px dashed #000; padding:15px; }
+        .header { text-align:center; border-bottom:2px dashed #000; padding-bottom:10px; margin-bottom:15px; }
+        .header h1 { font-size:18px; font-weight:bold; margin-bottom:5px; }
+        .header p { font-size:11px; margin:2px 0; }
+        .info { font-size:11px; margin:8px 0; }
+        .info strong { display:inline-block; width:80px; }
+        table { width:100%; border-collapse:collapse; margin:15px 0; }
+        th, td { padding:5px 3px; font-size:11px; }
+        th { border-bottom:2px solid #000; text-align:center; font-weight:bold; }
+        td:nth-child(1) { width:10%; text-align:center; }
+        td:nth-child(2) { width:40%; }
+        td:nth-child(3) { width:20%; text-align:center; }
+        td:nth-child(4) { width:10%; text-align:center; }
+        td:nth-child(5) { width:20%; text-align:right; }
+        .total-section { margin-top:10px; font-size:12px; text-align:right; }
+        .total-row { display:flex; justify-content:space-between; font-weight:bold; padding:6px 0; border-top:1px dotted #000; max-width:280px; margin-left:auto; }
+        .grand-total { font-size:14px!important; font-weight:bold; border-top:2px double #000; padding-top:8px; }
+        .footer-note { text-align:center; margin-top:15px; font-size:11px; font-weight:bold; }
+        .not-tax { text-align:center; margin-top:20px; font-weight:bold; font-size:13px; padding:10px; border:2px dashed #000; }
+        .no-print { margin-top:25px; text-align:center; }
+        input, select { width:90%; max-width:280px; padding:10px; margin:8px 0; font-size:14px; border:1px solid #000; }
+        .btn { padding:12px 20px; margin:8px; border:none; color:white; border-radius:5px; cursor:pointer; font-size:14px; }
+        .btn-success { background:#27ae60; }
+        .btn-primary { background:#2980b9; }
+        .btn-warning { background:#e67e22; }
+        @media print { .no-print { display:none !important; } }
+        @page { margin:5mm; }
     </style>
 </head>
 <body>
-    <div class="bill">
-        <!-- HEADER -->
-        <div class="header">
-            <h1><?php echo htmlspecialchars($shop_name); ?></h1>
-            <p>Phone: <?php echo htmlspecialchars($phone_number); ?></p>
-            <p>Address: <?php echo htmlspecialchars($branch); ?></p>
-        </div>
 
-        <!-- BILL INFO -->
-        <div class="bill-info">
-            <p><strong>Bill No:</strong> <span id="billNoDisplay"><?php echo $bill_no_display; ?></span></p>
-            <p><strong>Date:</strong> <span id="printTime"><?php echo $printed_date_display; ?></span></p>
-            <p><strong>Customer Name:</strong> <span class="customer-name"></span></p>
-            <div class="dotted-line"></div> <!-- ✅ DOTTED LINE AFTER CUSTOMER NAME -->
-        </div>
-
-        <!-- ITEMS TABLE - CLEAN FORMAT -->
-        <table>
-            <thead>
-                <tr>
-                    <th>S.N.</th>
-                    <th>Name</th>
-                    <th>Size</th>
-                    <th>Price</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php if (!empty($detailed_items)): ?>
-                    <?php foreach ($detailed_items as $index => $item): ?>
-                        <tr>
-                            <td><?php echo $index + 1; ?>.</td>
-                            <td><?php echo htmlspecialchars($item['name']); ?><?php echo !empty($item['section']) ? ' - ' . htmlspecialchars($item['section']) : ''; ?></td>
-                            <td><?php echo htmlspecialchars($item['size']); ?></td>
-                            <td style="text-align: right;"><?php echo number_format($item['price'], 2); ?></td> <!-- ✅ RS. REMOVED -->
-                        </tr>
-                    <?php endforeach; ?>
-                <?php else: ?>
-                    <tr><td colspan="4" style="text-align: center; padding: 20px;">No items selected</td></tr>
-                <?php endif; ?>
-            </tbody>
-            <tfoot>
-                <tr class="total-row">
-                    <td colspan="3" style="text-align: right; font-weight: bold;">TOTAL:</td>
-                    <td style="text-align: right; white-space: nowrap;"><strong>Rs. <?php echo number_format($subtotal, 2); ?></strong></td> <!-- ✅ RS. ADDED BACK TO TOTAL + NOWRAP -->
-                </tr>
-            </tfoot>
-        </table>
-
-        <!-- FOOTER -->
-        <div class="footer">
-            <p class="amount-words">
-                <strong>Amount in Words:</strong> <span id="words"><?php echo htmlspecialchars($amount_in_words); ?></span>
-            </p>
-            <p><strong>Printed By:</strong> <span id="printedBy"><?php echo htmlspecialchars($printed_by); ?></span></p>
-            <p id="paymentInfo" style="display: none;">
-                <strong>Payment Method:</strong> <span id="paymentMethod"></span>
-            </p>
-        </div>
-
-        <div class="non-official">
-            <strong>⚠️ THIS IS A NON-OFFICIAL BILL ⚠️</strong>
-        </div>
+<div class="bill" id="printableBill">
+    <div class="header">
+        <h1><?php echo htmlspecialchars($shop_name); ?></h1>
+        <p>Phone: <?php echo htmlspecialchars($phone_number); ?></p>
+        <p><?php echo htmlspecialchars($location); ?></p>
     </div>
 
-    <div class="no-print">
-        <div class="form-group">
-            <select id="payment_method" class="form-select">
-                <option value="cash">Cash</option>
-                <option value="online">Online</option>
-            </select>
-            <br><br>
-            <?php if ($subtotal > 0): ?>
-                <button id="markPaidBtn" class="btn btn-success">✅ Mark as Paid</button>
-            <?php else: ?>
-                <div style="color: red; padding: 15px;">
-                    <p>❌ No items selected!</p>
-                </div>
+    <div class="info"><strong>Bill No:</strong> <?php echo $bill_number; ?></div>
+    <div class="info"><strong>Date:</strong> <?php echo $printed_date_display; ?></div>
+    <div class="info"><strong>Customer:</strong> <span id="customerDisplay"><?php echo htmlspecialchars($customer_name ?: 'Walking Customer'); ?></span></div>
+    <?php if (!empty($_SESSION['temp_school_name'])): ?>
+        <div class="info"><strong>School:</strong> <?php echo htmlspecialchars($_SESSION['temp_school_name']); ?></div>
+    <?php endif; ?>
+
+    <table>
+        <thead>
+            <tr>
+                <th>S.N</th>
+                <th>Item</th>
+                <th>Size</th>
+                <th>Qty</th>
+                <th>Amount</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php foreach ($detailed_items as $i => $item): ?>
+            <tr>
+                <td><?php echo $i + 1; ?>.</td>
+                <td><?php echo htmlspecialchars($item['name']); ?></td>
+                <td style="text-align:center;"><?php echo htmlspecialchars($item['size']); ?></td>
+                <td style="text-align:center;"><?php echo $item['qty']; ?></td>
+                <td style="text-align:right;"><?php echo number_format($item['amount'], 2); ?></td>
+            </tr>
+            <?php endforeach; ?>
+            <?php if (empty($detailed_items)): ?>
+            <tr><td colspan="5" style="text-align:center;padding:20px;">No items selected</td></tr>
             <?php endif; ?>
+        </tbody>
+    </table>
+
+    <div class="total-section">
+        <div class="total-row">
+            <span>Sub Total:</span>
+            <span>Rs. <?php echo number_format($subtotal, 2); ?></span>
         </div>
-        <div id="successMessage" style="display: none; color: green; text-align: center; padding: 15px; font-weight: bold;">✅ Bill marked as paid!</div>
-        <div style="margin-top: 15px;">
-            <button onclick="window.print()" class="btn btn-primary">🖨️ Print Bill</button>
-            <a href="select_items.php" class="btn btn-info">↩️ Back to Items</a>
-            <a href="?clear_dashboard=1" class="btn btn-warning">🏠 Back to Dashboard</a>
+        <div class="total-row">
+            <span>Advance Paid:</span>
+            <span id="advanceDisplay">Rs. 0.00</span>
+        </div>
+        <div class="total-row">
+            <span>Remaining:</span>
+            <span id="remainingDisplay">Rs. <?php echo number_format($subtotal, 2); ?></span>
+        </div>
+        <div class="total-row grand-total">
+            <span>GRAND TOTAL:</span>
+            <span id="grandTotalDisplay">Rs. <?php echo number_format($subtotal, 2); ?></span>
         </div>
     </div>
 
-    <script>
-    document.getElementById('markPaidBtn')?.addEventListener('click', function() {
-        const payment_method = document.getElementById('payment_method').value;
-        const btn = this;
-        const originalText = btn.innerHTML;
-        btn.innerHTML = '⏳ Processing...';
-        btn.disabled = true;
+    <div class="footer-note">
+        Note: Exchange available within seven days
+    </div>
 
-        fetch('', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-            body: 'ajax_mark_paid=1&payment_method=' + encodeURIComponent(payment_method)
+    <div class="not-tax">
+        THIS IS NOT A TAX BILL
+    </div>
+</div>
+
+<div class="no-print">
+    <input type="text" id="customerName" placeholder="Customer Name (optional)" value="<?php echo htmlspecialchars($customer_name); ?>">
+    <input type="number" id="advanceInput" placeholder="Advance / Paid Amount" step="1" min="0" value="0">
+    <select id="paymentMethod">
+        <option value="cash">Cash</option>
+        <option value="online">Online / UPI</option>
+    </select>
+
+    <?php if ($subtotal > 0): ?>
+        <button id="savePrintBtn" class="btn btn-success">Mark as Paid & Print</button>
+    <?php else: ?>
+        <div style="color:red;font-weight:bold;">No items in bill!</div>
+    <?php endif; ?>
+
+    <div style="margin-top:20px;">
+        <button onclick="window.print()" class="btn btn-primary">Print Only</button>
+        <a href="select_items.php" class="btn btn-primary">Add More Items</a>
+        <a href="?clear_dashboard=1" class="btn btn-warning">New Bill</a>
+    </div>
+</div>
+
+<script>
+const totalAmount = <?php echo $subtotal; ?>;
+
+function updateAmounts() {
+    const advance = parseFloat(document.getElementById('advanceInput').value) || 0;
+    const remaining = totalAmount - advance;
+    document.getElementById('advanceDisplay').textContent = 'Rs. ' + advance.toFixed(2);
+    document.getElementById('remainingDisplay').textContent = 'Rs. ' + (remaining > 0 ? remaining.toFixed(2) : '0.00');
+    document.getElementById('grandTotalDisplay').textContent = 'Rs. ' + totalAmount.toFixed(2);
+}
+
+document.getElementById('advanceInput').addEventListener('input', updateAmounts);
+document.getElementById('customerName').addEventListener('input', () => {
+    document.getElementById('customerDisplay').textContent = document.getElementById('customerName').value || 'Walking Customer';
+});
+
+document.getElementById('savePrintBtn')?.addEventListener('click', function() {
+    const customer = document.getElementById('customerName').value.trim();
+    const advance = parseFloat(document.getElementById('advanceInput').value) || 0;
+    const method = document.getElementById('paymentMethod').value;
+
+    this.disabled = true;
+    this.textContent = 'Saving...';
+
+    fetch('', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+            ajax_mark_paid: '1',
+            customer_name: customer,
+            advance_payment: advance,
+            payment_method: method
         })
-        .then(r => r.json())
-        .then(data => {
-            if (data.success) {
-                const bd = data.bill_details;
-                document.getElementById('billNoDisplay').innerText = bd.bill_number;
-                document.getElementById('printTime').innerText = bd.printed_date_display;
-                document.getElementById('words').innerText = bd.amount_in_words;
-                document.getElementById('printedBy').innerText = bd.printed_by;
-                document.getElementById('paymentMethod').innerText = 
-                    bd.payment_method.charAt(0).toUpperCase() + bd.payment_method.slice(1);
-                document.getElementById('paymentInfo').style.display = 'block';
-                
-                btn.parentElement.style.display = 'none';
-                document.getElementById('successMessage').style.display = 'block';
-                
-                setTimeout(() => {
-                    window.print();
-                }, 1000);
-            } else {
-                alert('❌ Error: ' + (data.error || 'Failed to process payment'));
-                btn.innerHTML = originalText;
-                btn.disabled = false;
-            }
-        })
-        .catch(error => {
-            console.error('Payment error:', error);
-            alert('❌ Network error. Please try again.');
-            btn.innerHTML = originalText;
-            btn.disabled = false;
-        });
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            updateAmounts();
+            alert('Bill #' + data.bill_number + ' saved successfully!');
+            setTimeout(() => window.print(), 500);
+        } else {
+            alert('Error: ' + (data.error || 'Failed'));
+            this.disabled = false;
+            this.textContent = 'Mark as Paid & Print';
+        }
+    })
+    .catch(() => {
+        alert('Network error');
+        this.disabled = false;
+        this.textContent = 'Mark as Paid & Print';
     });
-    </script>
+});
+
+updateAmounts();
+</script>
+
 </body>
 </html>

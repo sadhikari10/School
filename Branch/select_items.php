@@ -50,77 +50,90 @@ if ($_POST['save_session'] ?? false) {
     <title>Select Sizes - <?php echo htmlspecialchars($school_name); ?></title>
     <link rel="stylesheet" href="select_items.css">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&display=swap">
-    <style>
-        .size-box {
-            background: #f8f9fa;
-            border: 2px solid #e1e8ed;
-            border-radius: 16px;
-            padding: 18px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            position: relative;
-            text-align: center;
-        }
-        .size-box:hover {
-            border-color: #667eea;
-            transform: translateY(-4px);
-            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.2);
-        }
-        .size-box.selected {
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            color: white;
-            border-color: #5a6fd8;
-            transform: scale(1.05);
-        }
-        .size-box.selected::after {
-            content: '✓';
-            position: absolute;
-            top: -10px;
-            right: -10px;
-            background: #27ae60;
-            color: white;
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
-            font-size: 18px;
-            box-shadow: 0 4px 15px rgba(39, 174, 96, 0.4);
-        }
-        .size-label {
-            font-weight: 700;
-            font-size: 1.3rem;
-            margin-bottom: 8px;
-        }
-        .size-price {
-            font-size: 1.1rem;
-            opacity: 0.9;
-        }
-        .qty-badge {
-            display: inline-block;
-            background: rgba(255,255,255,0.3);
-            color: white;
-            font-weight: bold;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 0.9rem;
-            min-width: 28px;
-            margin-top: 8px;
-        }
-        .brand-header {
-            grid-column: 1 / -1;
-            font-size: 1.4rem;
-            font-weight: 700;
-            color: #667eea;
-            text-align: center;
-            margin: 25px 0 15px;
-            padding: 10px;
-            background: rgba(102, 126, 234, 0.1);
-            border-radius: 12px;
-        }
-    </style>
+<style>
+    .size-box {
+        background: #f8f9fa;
+        border: 2px solid #e1e8ed;
+        border-radius: 16px;
+        padding: 18px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        position: relative;
+        text-align: center;
+    }
+    .size-box:hover {
+        border-color: #667eea;
+        transform: translateY(-4px);
+        box-shadow: 0 10px 25px rgba(102, 126, 234, 0.2);
+    }
+
+    /* Beautiful GREEN CHECKMARK inside popup – NO TEXT */
+    .size-box.selected-in-modal {
+        border-color: #27ae60 !important;
+        background: #f0fff4 !important;
+    }
+    .size-box.selected-in-modal::after {
+        content: '✓';        /* ← This is the real checkmark */
+        position: absolute;
+        top: -10px;
+        right: -10px;
+        background: #27ae60;
+        color: white;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        font-size: 18px;
+        box-shadow: 0 4px 15px rgba(39, 174, 96, 0.4);
+    }
+
+    /* No visual change outside popup */
+    .size-box.has-quantity,
+    .category-card.has-selection {
+        border-color: #e1e8ed !important;
+        background: #f8f9fa !important;
+    }
+
+    .qty-badge {
+        display: inline-block;
+        background: #27ae60;
+        color: white;
+        font-weight: bold;
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 0.9rem;
+        min-width: 28px;
+        margin-top: 8px;
+    }
+
+    .selected-indicator {
+        position: absolute;
+        top: -10px;
+        right: -10px;
+        background: #27ae60;
+        color: white;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        font-size: 14px;
+        box-shadow: 0 4px 12px rgba(39, 174, 96, 0.5);
+        z-index: 10;
+    }
+
+    .category-card:hover {
+        border-color: #667eea;
+        transform: translateY(-5px);
+        box-shadow: 0 12px 30px rgba(102, 126, 234, 0.25);
+    }
+</style>
+   
 </head>
 <body>
 
@@ -134,11 +147,8 @@ if ($_POST['save_session'] ?? false) {
         <input type="hidden" name="school_id" value="<?php echo $school_id; ?>">
         <input type="hidden" name="school_name" value="<?php echo htmlspecialchars($school_name); ?>">
 
-        <?php foreach ($items as $item_name => $sizes): 
-            $safe_key = preg_replace('/[^a-zA-Z0-9]/', '_', $item_name);
-        ?>
-            <input type="hidden" name="selected_sizes[<?php echo $safe_key; ?>]" id="selected_<?php echo $safe_key; ?>" value="<?php echo htmlspecialchars($selectedSizes[$safe_key] ?? ''); ?>">
-        <?php endforeach; ?>
+        <!-- Dynamic hidden inputs for order -->
+        <div id="dynamicInputs"></div>
 
         <div class="categories-grid">
             <?php foreach ($items as $item_name => $sizes): 
@@ -265,7 +275,6 @@ function showSizeModal(key, name, emoji) {
     let lastBrand = null;
 
     sizes.forEach(s => {
-        // Show brand header only if multiple brands exist
         if (showBrandHeader && s.brand !== lastBrand) {
             lastBrand = s.brand;
             const h = document.createElement('div');
@@ -278,7 +287,12 @@ function showSizeModal(key, name, emoji) {
         const qty = selected[code] || 0;
 
         const box = document.createElement('div');
-        box.className = `size-box ${qty > 0 ? 'selected' : ''}`;
+        box.className = 'size-box';
+        if (qty > 0) {
+            box.classList.add('selected-in-modal');  // Only in modal: green checkmark
+            box.classList.add('has-quantity');       // Keep green border outside too
+        }
+
         box.onclick = () => addOne(key, code);
 
         box.innerHTML = `
@@ -291,6 +305,7 @@ function showSizeModal(key, name, emoji) {
 
     document.getElementById('sizeModal').style.display = 'flex';
     updateIndicators();
+    updateHiddenOrderFields();
 }
 
 function addOne(key, code) {
@@ -298,17 +313,13 @@ function addOne(key, code) {
     map[code] = (map[code] || 0) + 1;
     selectedSizes[key] = stringify(map);
     if (!selectedSizes[key]) delete selectedSizes[key];
-    document.getElementById('selected_' + key).value = selectedSizes[key] || '';
     showSizeModal(key, currentItemName, document.getElementById('modalIcon').textContent);
-    updateIndicators();
     save();
 }
 
 function clearCurrentItem() {
     delete selectedSizes[currentKey];
-    document.getElementById('selected_' + currentKey).value = '';
     showSizeModal(currentKey, currentItemName, document.getElementById('modalIcon').textContent);
-    updateIndicators();
     save();
 }
 
@@ -340,6 +351,45 @@ function updateIndicators() {
     });
 
     document.querySelector('.next-btn').textContent = `Pay Bill (${totalItems})`;
+}
+
+function updateHiddenOrderFields() {
+    const container = document.getElementById('dynamicInputs');
+    container.innerHTML = '';
+
+    Object.entries(selectedSizes).forEach(([key, str]) => {
+        if (!str) return;
+
+        const itemName = Object.keys(allItems).find(n => 
+            n.replace(/[^a-zA-Z0-9]/g, '_') === key
+        );
+        if (!itemName) return;
+
+        const map = parse(str);
+        Object.entries(map).forEach(([code, qty]) => {
+            const [size, brand] = code.split('|');
+            const item = allItems[itemName].find(i => i.size === size && i.brand === brand);
+            if (!item) return;
+
+            const index = btoa(Math.random()).substring(0, 12);
+
+            const fields = {
+                item_name: itemName,
+                size: size,
+                brand: brand,
+                price: item.price,
+                quantity: qty
+            };
+
+            Object.entries(fields).forEach(([field, value]) => {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = `order[${index}][${field}]`;
+                input.value = value;
+                container.appendChild(input);
+            });
+        });
+    });
 }
 
 function showSummary() {
@@ -392,7 +442,11 @@ function save() {
     fetch('', { method: 'POST', body: fd });
 }
 
-function closeSizeModal() { document.getElementById('sizeModal').style.display = 'none'; updateIndicators(); }
+function closeSizeModal() { 
+    document.getElementById('sizeModal').style.display = 'none'; 
+    updateIndicators(); 
+    updateHiddenOrderFields(); 
+}
 function closeSummary() { document.getElementById('selectedItemsModal').style.display = 'none'; }
 function closeConfirm() { document.getElementById('confirmModal').style.display = 'none'; }
 function checkAndShowConfirmModal() {
@@ -404,7 +458,12 @@ function checkAndShowConfirmModal() {
 }
 function confirmClear() { document.getElementById('clearForm').submit(); }
 
-document.addEventListener('DOMContentLoaded', updateIndicators);
+// Initialize
+document.addEventListener('DOMContentLoaded', () => {
+    updateIndicators();
+    updateHiddenOrderFields();
+});
+
 setInterval(save, 8000);
 </script>
 </body>
