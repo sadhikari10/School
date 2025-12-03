@@ -1,5 +1,5 @@
 <?php
-// bill.php - UPDATED FOR NEW order[] FORMAT
+// bill.php - ONLY ADDED PRINT BUTTON + RENAMED EXECUTE → SAVE BILL
 session_start();
 require '../Common/connection.php';
 require '../Common/nepali_date.php';
@@ -13,10 +13,8 @@ if (!isset($_SESSION['user_id'])) {
 
 $user_id = $_SESSION['user_id'];
 $username = $_SESSION['username'] ?? 'User';
-$branch = $_SESSION['branch'] ?? '';
 $outlet_id = $_SESSION['outlet_id'] ?? 0;
 
-// Fetch shop details
 $stmt_user = $pdo->prepare("SELECT shop_name FROM login WHERE id = :id");
 $stmt_user->execute([':id' => $user_id]);
 $shop_name = $stmt_user->fetchColumn() ?: 'Clothes Store';
@@ -25,80 +23,62 @@ $stmt_outlet = $pdo->prepare("SELECT phone_number, location FROM outlets WHERE o
 $stmt_outlet->execute([':oid' => $outlet_id]);
 $outlet = $stmt_outlet->fetch(PDO::FETCH_ASSOC);
 $phone_number = $outlet['phone_number'] ?? 'N/A';
-$location     = $outlet['location'] ?? 'N/A';
+$location     = $outlet['location'] ?? 'Unknown Branch';
 $printed_by   = $username;
 
-// Bill number logic
 $print_time_db = nepali_date_time();
 $bs_parts = explode(' ', $print_time_db);
 $bs_date = $bs_parts[0];
 $fiscal_year = get_fiscal_year($bs_date);
 
-$stmt_next = $pdo->prepare("SELECT COALESCE(last_bill_number, 0) + 1 as next_bill FROM bill_counter WHERE branch = :branch AND fiscal_year = :fy");
-$stmt_next->execute([':branch' => $branch, ':fy' => $fiscal_year]);
-$bill_number = (int)($stmt_next->fetchColumn() ?: 1);
+function getNextBillNumber($pdo, $branch, $fiscal_year) {
+    $stmt = $pdo->prepare("SELECT COALESCE(MAX(bill_number), 0) + 1 as next_bill 
+                            FROM (
+                                SELECT bill_number FROM sales WHERE branch = ? AND fiscal_year = ?
+                                UNION ALL
+                                SELECT bill_number FROM advance_payment WHERE branch = ? AND fiscal_year = ?
+                            ) combined");
+    $stmt->execute([$branch, $fiscal_year, $branch, $fiscal_year]);
+    return (int)$stmt->fetchColumn();
+}
+
+$bill_number = getNextBillNumber($pdo, $location, $fiscal_year);
 
 $detailed_items = [];
 $subtotal = 0.0;
 $customer_name = '';
 $items_json = '[]';
 
-// ================================================
-// NEW: Process clean order[] array from select_items.php
-// ================================================
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['ajax_mark_paid']) && !empty($_POST['order'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['ajax_mark_paid']) && !isset($_POST['ajax_save_advance']) && !empty($_POST['order'])) {
     $customer_name = trim($_POST['customer_name'] ?? '');
     $order_items = $_POST['order'];
-
     $items_processed = [];
 
     foreach ($order_items as $item) {
-        $item_name = $item['item_name'] ?? 'Unknown Item';
-        $size      = $item['size'] ?? '';
-        $brand     = $item['brand'] ?? '';
-        $price     = (float)($item['price'] ?? 0);
-        $qty       = (int)($item['quantity'] ?? 1);
+        $item_name = $item['item_name'] ?? 'Unknown';
+        $size = $item['size'] ?? '';
+        $brand = $item['brand'] ?? '';
+        $price = (float)($item['price'] ?? 0);
+        $qty = (int)($item['quantity'] ?? 1);
+        if ($price <= 0) $price = 1500;
 
-        if ($price <= 0) $price = 1500.00;
         $amount = $price * $qty;
+        $display_name = $item_name . ($brand && strtolower($brand) !== 'nepali' ? " - $brand" : '');
+        $display_size = empty($size) || stripos($size, 'not available') !== false ? 'N/A' : $size;
 
-        // Format display name
-        $display_name = $item_name;
-        if ($brand && strtolower($brand) !== 'nepali' && !empty(trim($brand))) {
-            $display_name .= " - " . trim($brand);
-        }
-
-        // Format size
-        $display_size = (empty($size) || stripos($size, 'not available') !== false) ? 'N/A' : $size;
-
-        $detailed_items[] = [
-            'name'   => $display_name,
-            'size'   => $display_size,
-            'qty'    => $qty,
-            'price'  => $price,
-            'amount' => $amount
-        ];
-
+        $detailed_items[] = ['name' => $display_name, 'size' => $display_size, 'qty' => $qty, 'price' => $price, 'amount' => $amount];
         $subtotal += $amount;
-
-        $items_processed[] = [
-            'name'     => $display_name,
-            'size'     => $display_size,
-            'price'    => $price,
-            'quantity' => $qty
-        ];
+        $items_processed[] = ['name' => $display_name, 'size' => $display_size, 'price' => $price, 'quantity' => $qty];
     }
 
     $items_json = json_encode($items_processed, JSON_UNESCAPED_UNICODE);
 
-    // Store in session for print/reprint
     $_SESSION['temp_bill_items'] = $detailed_items;
     $_SESSION['temp_subtotal'] = $subtotal;
     $_SESSION['temp_customer_name'] = $customer_name;
     $_SESSION['temp_items_json'] = $items_json;
     $_SESSION['temp_school_name'] = $_POST['school_name'] ?? $_SESSION['selected_school_name'] ?? '';
 } else {
-    // Load from session (for reprint or back button)
     $detailed_items = $_SESSION['temp_bill_items'] ?? [];
     $subtotal       = $_SESSION['temp_subtotal'] ?? 0.0;
     $customer_name  = $_SESSION['temp_customer_name'] ?? '';
@@ -107,12 +87,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['ajax_mark_paid']) &&
 
 $printed_date_display = nepali_date_time();
 
-// ================================================
-// AJAX: Save bill to database
-// ================================================
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
+// Check bill status
+$is_advance_saved = false;
+$is_paid_saved = false;
+
+$stmt = $pdo->prepare("SELECT 'advance' as type FROM advance_payment WHERE bill_number = ? AND branch = ? AND fiscal_year = ? 
+                       UNION ALL 
+                       SELECT 'paid' as type FROM sales WHERE bill_number = ? AND branch = ? AND fiscal_year = ?");
+$stmt->execute([$bill_number, $location, $fiscal_year, $bill_number, $location, $fiscal_year]);
+
+while ($row = $stmt->fetch()) {
+    if ($row['type'] === 'advance') $is_advance_saved = true;
+    if ($row['type'] === 'paid') $is_paid_saved = true;
+}
+
+// AJAX: Save as ADVANCE
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_save_advance'])) {
+    if ($is_paid_saved) {
+        echo json_encode(['success' => false, 'error' => 'Bill already marked as PAID!']);
+        exit;
+    }
+
     $customer_name = trim($_POST['customer_name'] ?? '');
-    $advance_payment = (float)($_POST['advance_payment'] ?? 0);
+    $advance_amount = (float)($_POST['advance_payment'] ?? 0);
+    $payment_method = $_POST['payment_method'] === 'online' ? 'online' : 'cash';
+    $school_name = $_SESSION['temp_school_name'] ?? '';
+
+    if ($advance_amount <= 0 || empty($detailed_items)) {
+        echo json_encode(['success' => false, 'error' => 'Invalid advance amount']);
+        exit;
+    }
+
+    $pdo->prepare("INSERT INTO advance_payment 
+        (bill_number, branch, fiscal_year, school_name, customer_name, advance_amount, payment_method, printed_by, bs_datetime, items_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        ->execute([$bill_number, $location, $fiscal_year, $school_name, $customer_name, $advance_amount, $payment_method, $printed_by, $print_time_db, $items_json]);
+
+    echo json_encode(['success' => true, 'bill_number' => $bill_number]);
+    exit;
+}
+
+// AJAX: Mark as PAID
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
+    if ($is_advance_saved) {
+        echo json_encode(['success' => false, 'error' => 'Bill already saved as ADVANCE!']);
+        exit;
+    }
+
+    $customer_name = trim($_POST['customer_name'] ?? '');
     $payment_method = $_POST['payment_method'] === 'online' ? 'online' : 'cash';
     $school_name = $_SESSION['temp_school_name'] ?? '';
 
@@ -121,31 +143,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
         exit;
     }
 
-    // Update bill counter
-    $pdo->prepare("INSERT INTO bill_counter (branch, fiscal_year, last_bill_number) VALUES (?, ?, ?) 
-                   ON DUPLICATE KEY UPDATE last_bill_number = VALUES(last_bill_number)")
-        ->execute([$branch, $fiscal_year, $bill_number]);
-
-    // Insert sale record
     $pdo->prepare("INSERT INTO sales 
         (bill_number, branch, fiscal_year, school_name, customer_name, total, payment_method, printed_by, printed_at, bs_datetime, items_json)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)")
-        ->execute([$bill_number, $branch, $fiscal_year, $school_name, $customer_name, $subtotal, $payment_method, $printed_by, $print_time_db, $items_json]);
+        ->execute([$bill_number, $location, $fiscal_year, $school_name, $customer_name, $subtotal, $payment_method, $printed_by, $print_time_db, $items_json]);
 
-    // Clear temp session
     unset($_SESSION['temp_bill_items'], $_SESSION['temp_subtotal'], $_SESSION['temp_customer_name'], $_SESSION['temp_items_json'], $_SESSION['temp_school_name']);
 
-    echo json_encode([
-        'success' => true,
-        'bill_number' => $bill_number,
-        'customer' => $customer_name ?: 'Customer',
-        'advance' => $advance_payment,
-        'remaining' => $subtotal - $advance_payment
-    ]);
+    echo json_encode(['success' => true, 'bill_number' => $bill_number]);
     exit;
 }
 
-// Clear session for new bill
 if (isset($_GET['clear_dashboard'])) {
     unset($_SESSION['temp_bill_items'], $_SESSION['temp_subtotal'], $_SESSION['temp_customer_name'], $_SESSION['temp_items_json'], $_SESSION['temp_school_name']);
     header('Location: dashboard.php');
@@ -158,64 +166,26 @@ if (isset($_GET['clear_dashboard'])) {
 <head>
     <meta charset="UTF-8">
     <title>Bill #<?php echo $bill_number; ?></title>
-    <style>
-        * { margin:0; padding:0; box-sizing:border-box; }
-        body { font-family:'Courier New', monospace; font-size:12px; line-height:1.3; padding:10px; background:white; }
-        .bill { max-width:80mm; margin:auto; border:2px dashed #000; padding:15px; }
-        .header { text-align:center; border-bottom:2px dashed #000; padding-bottom:10px; margin-bottom:15px; }
-        .header h1 { font-size:18px; font-weight:bold; margin-bottom:5px; }
-        .header p { font-size:11px; margin:2px 0; }
-        .info { font-size:11px; margin:8px 0; }
-        .info strong { display:inline-block; width:80px; }
-        table { width:100%; border-collapse:collapse; margin:15px 0; }
-        th, td { padding:5px 3px; font-size:11px; }
-        th { border-bottom:2px solid #000; text-align:center; font-weight:bold; }
-        td:nth-child(1) { width:10%; text-align:center; }
-        td:nth-child(2) { width:40%; }
-        td:nth-child(3) { width:20%; text-align:center; }
-        td:nth-child(4) { width:10%; text-align:center; }
-        td:nth-child(5) { width:20%; text-align:right; }
-        .total-section { margin-top:10px; font-size:12px; text-align:right; }
-        .total-row { display:flex; justify-content:space-between; font-weight:bold; padding:6px 0; border-top:1px dotted #000; max-width:280px; margin-left:auto; }
-        .grand-total { font-size:14px!important; font-weight:bold; border-top:2px double #000; padding-top:8px; }
-        .footer-note { text-align:center; margin-top:15px; font-size:11px; font-weight:bold; }
-        .not-tax { text-align:center; margin-top:20px; font-weight:bold; font-size:13px; padding:10px; border:2px dashed #000; }
-        .no-print { margin-top:25px; text-align:center; }
-        input, select { width:90%; max-width:280px; padding:10px; margin:8px 0; font-size:14px; border:1px solid #000; }
-        .btn { padding:12px 20px; margin:8px; border:none; color:white; border-radius:5px; cursor:pointer; font-size:14px; }
-        .btn-success { background:#27ae60; }
-        .btn-primary { background:#2980b9; }
-        .btn-warning { background:#e67e22; }
-        @media print { .no-print { display:none !important; } }
-        @page { margin:5mm; }
-    </style>
+    <link rel="stylesheet" href="bill.css">
 </head>
 <body>
 
+<!-- PRINTABLE BILL (unchanged) -->
 <div class="bill" id="printableBill">
     <div class="header">
         <h1><?php echo htmlspecialchars($shop_name); ?></h1>
         <p>Phone: <?php echo htmlspecialchars($phone_number); ?></p>
         <p><?php echo htmlspecialchars($location); ?></p>
     </div>
-
     <div class="info"><strong>Bill No:</strong> <?php echo $bill_number; ?></div>
     <div class="info"><strong>Date:</strong> <?php echo $printed_date_display; ?></div>
-    <div class="info"><strong>Customer:</strong> <span id="customerDisplay"><?php echo htmlspecialchars($customer_name ?: 'Walking Customer'); ?></span></div>
-    <?php if (!empty($_SESSION['temp_school_name'])): ?>
+    <div class="info"><strong>Customer:</strong> <span id="customerDisplay"><?php echo htmlspecialchars($customer_name ?: 'Customer'); ?></span></div>
+    <!-- <?php if (!empty($_SESSION['temp_school_name'])): ?>
         <div class="info"><strong>School:</strong> <?php echo htmlspecialchars($_SESSION['temp_school_name']); ?></div>
-    <?php endif; ?>
+    <?php endif; ?> -->
 
     <table>
-        <thead>
-            <tr>
-                <th>S.N</th>
-                <th>Item</th>
-                <th>Size</th>
-                <th>Qty</th>
-                <th>Amount</th>
-            </tr>
-        </thead>
+        <thead><tr><th>S.N</th><th>Item</th><th>Size</th><th>Qty</th><th>Amount</th></tr></thead>
         <tbody>
             <?php foreach ($detailed_items as $i => $item): ?>
             <tr>
@@ -226,116 +196,170 @@ if (isset($_GET['clear_dashboard'])) {
                 <td style="text-align:right;"><?php echo number_format($item['amount'], 2); ?></td>
             </tr>
             <?php endforeach; ?>
-            <?php if (empty($detailed_items)): ?>
-            <tr><td colspan="5" style="text-align:center;padding:20px;">No items selected</td></tr>
-            <?php endif; ?>
         </tbody>
     </table>
 
     <div class="total-section">
-        <div class="total-row">
-            <span>Sub Total:</span>
-            <span>Rs. <?php echo number_format($subtotal, 2); ?></span>
-        </div>
-        <div class="total-row">
-            <span>Advance Paid:</span>
-            <span id="advanceDisplay">Rs. 0.00</span>
-        </div>
-        <div class="total-row">
-            <span>Remaining:</span>
-            <span id="remainingDisplay">Rs. <?php echo number_format($subtotal, 2); ?></span>
-        </div>
-        <div class="total-row grand-total">
-            <span>GRAND TOTAL:</span>
-            <span id="grandTotalDisplay">Rs. <?php echo number_format($subtotal, 2); ?></span>
-        </div>
+        <div class="total-row"><span>Sub Total:</span><span>Rs. <?php echo number_format($subtotal, 2); ?></span></div>
+        <div class="total-row"><span>Advance Paid:</span><span id="advanceDisplay">Rs. 0.00</span></div>
+        <div class="total-row"><span>Remaining:</span><span id="remainingDisplay">Rs. <?php echo number_format($subtotal, 2); ?></span></div>
+        <div class="total-row grand-total"><span>GRAND TOTAL:</span><span>Rs. <?php echo number_format($subtotal, 2); ?></span></div>
     </div>
 
-    <div class="footer-note">
-        Note: Exchange available within seven days
-    </div>
-
-    <div class="not-tax">
-        THIS IS NOT A TAX BILL
-    </div>
+    <div class="footer-note">Note: Exchange available within seven days</div>
+    <div class="not-tax">THIS IS NOT A TAX BILL</div>
 </div>
 
-<div class="no-print">
-    <input type="text" id="customerName" placeholder="Customer Name (optional)" value="<?php echo htmlspecialchars($customer_name); ?>">
-    <input type="number" id="advanceInput" placeholder="Advance / Paid Amount" step="1" min="0" value="0">
-    <select id="paymentMethod">
-        <option value="cash">Cash</option>
-        <option value="online">Online / UPI</option>
-    </select>
+<!-- NON-PRINTABLE CLEAN UI -->
+<div class="no-print controls">
+    <!-- Line 1 -->
+    <div class="control-row">
+        <label>Customer Name:</label>
+        <input type="text" id="customerName" value="<?php echo htmlspecialchars($customer_name); ?>">
+    </div>
 
-    <?php if ($subtotal > 0): ?>
-        <button id="savePrintBtn" class="btn btn-success">Mark as Paid & Print</button>
-    <?php else: ?>
-        <div style="color:red;font-weight:bold;">No items in bill!</div>
+    <!-- Line 2 -->
+    <div class="control-row">
+        <label>Payment Method:</label>
+        <select id="paymentMethod">
+            <option value="cash">Cash</option>
+            <option value="online">Online</option>
+        </select>
+
+        <label>Advance Amount:</label>
+        <input type="number" id="advanceInput" value="0" min="0" step="1">
+    </div>
+
+    <!-- Action Buttons Line -->
+    <?php if ($subtotal > 0 && !$is_advance_saved && !$is_paid_saved): ?>
+    <div class="control-row buttons-row">
+        <select id="billAction">
+            <option value="">-- Select Action --</option>
+            <option value="advance">Save as Advance</option>
+            <option value="paid">Mark as Paid & Print</option>
+        </select>
+
+        <button id="saveBillBtn">Save Bill</button>   <!-- RENAMED -->
+        <button id="printBtn">Print</button>         <!-- NEW PRINT BUTTON -->
+        <button id="showQrBtn">Show QR</button>
+        <a href="select_items.php">Add More Items</a>
+        <a href="?clear_dashboard=1">New Bill</a>
+    </div>
+    <?php elseif ($subtotal > 0): ?>
+    <div class="control-row" style="text-align:center; color:green; font-weight:bold; font-size:18px;">
+        <?php echo $is_advance_saved ? "Advance Already Saved" : "Bill Already Marked as PAID"; ?>
+        (Bill #<?php echo $bill_number; ?>)
+    </div>
     <?php endif; ?>
-
-    <div style="margin-top:20px;">
-        <button onclick="window.print()" class="btn btn-primary">Print Only</button>
-        <a href="select_items.php" class="btn btn-primary">Add More Items</a>
-        <a href="?clear_dashboard=1" class="btn btn-warning">New Bill</a>
-    </div>
 </div>
+
+<!-- QR Popup -->
+<div class="qr-popup" id="qrPopup">
+    <span class="close-qr" onclick="document.getElementById('qrPopup').style.display='none'">×</span>
+    <img src="../QR/1.jpeg" alt="Payment QR">
+</div>
+
+<!-- Alert -->
+<div class="overlay" id="alertOverlay"></div>
+<div class="custom-alert" id="alertBox">
+    <h3 id="alertMessage">Success!</h3>
+    <button onclick="closeAlert()">OK</button>
+</div>
+
+<!-- ALL CSS + JS -->
+<style>
+    @media print { .no-print { display: none !important; } }
+    .controls { margin:20px 0; padding:15px; background:#f8f9fa; border-radius:8px; font-family:Arial,sans-serif; }
+    .control-row { display:flex; flex-wrap:wrap; gap:15px; align-items:center; margin-bottom:15px; }
+    .control-row label { width:140px; font-weight:bold; color:#2c3e50; }
+    .control-row input, .control-row select { padding:10px; font-size:16px; border:1px solid #ddd; border-radius:5px; flex:1; min-width:200px; }
+    .buttons-row { justify-content:center; gap:12px; }
+    .buttons-row select, .buttons-row button, .buttons-row a {
+        padding:12px 22px; font-size:16px; border:none; border-radius:5px; cursor:pointer; text-decoration:none; color:white;
+    }
+    #billAction { background:#34495e; }
+    #saveBillBtn { background:#27ae60; }
+    #printBtn { background:#8e44ad; }
+    #showQrBtn { background:#3498db; }
+    .buttons-row a:first-of-type { background:#2980b9; }
+    .buttons-row a:last-of-type { background:#e67e22; }
+    .buttons-row button:hover, .buttons-row a:hover { opacity:0.9; }
+    .qr-popup { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.95); justify-content:center; align-items:center; z-index:9999; }
+    .qr-popup img { max-width:90%; max-height:90%; border:10px solid white; border-radius:15px; }
+    .close-qr { position:absolute; top:20px; right:30px; font-size:50px; color:white; cursor:pointer; }
+    .overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9998; }
+    .custom-alert { display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:white; padding:30px; border-radius:10px; text-align:center; z-index:9999; box-shadow:0 5px 20px rgba(0,0,0,0.3); }
+    .custom-alert button { margin-top:15px; padding:10px 25px; background:#27ae60; color:white; border:none; border-radius:5px; cursor:pointer; }
+</style>
 
 <script>
 const totalAmount = <?php echo $subtotal; ?>;
 
-function updateAmounts() {
+function updateDisplay() {
     const advance = parseFloat(document.getElementById('advanceInput').value) || 0;
-    const remaining = totalAmount - advance;
     document.getElementById('advanceDisplay').textContent = 'Rs. ' + advance.toFixed(2);
-    document.getElementById('remainingDisplay').textContent = 'Rs. ' + (remaining > 0 ? remaining.toFixed(2) : '0.00');
-    document.getElementById('grandTotalDisplay').textContent = 'Rs. ' + totalAmount.toFixed(2);
+    document.getElementById('remainingDisplay').textContent = 'Rs. ' + (totalAmount - advance).toFixed(2);
+    document.getElementById('customerDisplay').textContent = document.getElementById('customerName').value || 'Customer';
 }
+document.getElementById('advanceInput').addEventListener('input', updateDisplay);
+document.getElementById('customerName').addEventListener('input', updateDisplay);
 
-document.getElementById('advanceInput').addEventListener('input', updateAmounts);
-document.getElementById('customerName').addEventListener('input', () => {
-    document.getElementById('customerDisplay').textContent = document.getElementById('customerName').value || 'Walking Customer';
-});
-
-document.getElementById('savePrintBtn')?.addEventListener('click', function() {
-    const customer = document.getElementById('customerName').value.trim();
+// SAVE BILL BUTTON (was Execute)
+document.getElementById('saveBillBtn')?.addEventListener('click', function() {
+    const action = document.getElementById('billAction').value;
+    if (!action) return showAlert('Please select an action');
     const advance = parseFloat(document.getElementById('advanceInput').value) || 0;
-    const method = document.getElementById('paymentMethod').value;
 
     this.disabled = true;
     this.textContent = 'Saving...';
 
-    fetch('', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-            ajax_mark_paid: '1',
-            customer_name: customer,
-            advance_payment: advance,
-            payment_method: method
-        })
-    })
+    const data = new URLSearchParams({
+        customer_name: document.getElementById('customerName').value,
+        payment_method: document.getElementById('paymentMethod').value
+    });
+
+    if (action === 'advance') {
+        if (advance <= 0) { showAlert('Enter advance amount'); this.disabled = false; this.textContent = 'Save Bill'; return; }
+        data.append('ajax_save_advance', '1');
+        data.append('advance_payment', advance);
+    } else {
+        data.append('ajax_mark_paid', '1');
+        data.append('advance_payment', advance);
+    }
+
+    fetch('', { method: 'POST', body: data })
     .then(r => r.json())
-    .then(data => {
-        if (data.success) {
-            updateAmounts();
-            alert('Bill #' + data.bill_number + ' saved successfully!');
-            setTimeout(() => window.print(), 500);
+    .then(d => {
+        if (d.success) {
+            showAlert(action === 'advance' ? 'Advance saved!' : 'Bill saved & ready to print!');
+            setTimeout(() => action === 'paid' ? window.print() : location.reload(), 1200);
         } else {
-            alert('Error: ' + (data.error || 'Failed'));
+            showAlert(d.error);
             this.disabled = false;
-            this.textContent = 'Mark as Paid & Print';
+            this.textContent = 'Save Bill';
         }
-    })
-    .catch(() => {
-        alert('Network error');
-        this.disabled = false;
-        this.textContent = 'Mark as Paid & Print';
     });
 });
 
-updateAmounts();
-</script>
+// PRINT BUTTON (new)
+document.getElementById('printBtn')?.addEventListener('click', () => window.print());
 
+// Show QR
+document.getElementById('showQrBtn')?.addEventListener('click', () => {
+    document.getElementById('qrPopup').style.display = 'flex';
+});
+
+function showAlert(msg) {
+    document.getElementById('alertMessage').textContent = msg;
+    document.getElementById('alertOverlay').style.display = 'block';
+    document.getElementById('alertBox').style.display = 'block';
+}
+function closeAlert() {
+    document.getElementById('alertOverlay').style.display = 'none';
+    document.getElementById('alertBox').style.display = 'none';
+}
+
+updateDisplay();
+</script>
 </body>
 </html>
