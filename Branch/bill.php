@@ -153,8 +153,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
     exit;
 }
 
-if (isset($_GET['clear_dashboard'])) {
-    unset($_SESSION['temp_bill_items'], $_SESSION['temp_subtotal'], $_SESSION['temp_customer_name'], $_SESSION['temp_items_json'], $_SESSION['temp_school_name']);
+// Secure New Bill — triggered by POST, no URL parameters
+if (isset($_POST['start_new_bill'])) {
+    // Clear ALL temporary data
+    unset(
+        $_SESSION['temp_bill_items'],
+        $_SESSION['temp_subtotal'],
+        $_SESSION['temp_customer_name'],
+        $_SESSION['temp_items_json'],
+        $_SESSION['temp_school_name'],
+        $_SESSION['selected_sizes']  // This clears the uniform selections!
+    );
+
+    // Optional: Also clear school if you want full reset
+    // unset($_SESSION['selected_school_id'], $_SESSION['selected_school_name']);
+
     header('Location: dashboard.php');
     exit;
 }
@@ -242,7 +255,10 @@ if (isset($_GET['clear_dashboard'])) {
         <button id="printBtn">Print</button>         <!-- NEW PRINT BUTTON -->
         <button id="showQrBtn">Show QR</button>
         <a href="select_items.php">Add More Items</a>
-        <a href="?clear_dashboard=1">New Bill</a>
+        <form method="POST" id="newBillForm" style="display:inline;">
+            <input type="hidden" name="start_new_bill" value="1">
+            <a href="javascript:void(0)" onclick="confirmNewBill()" class="new-bill-link">New Bill</a>
+        </form>
     </div>
     <?php elseif ($subtotal > 0): ?>
     <div class="control-row" style="text-align:center; color:green; font-weight:bold; font-size:18px;">
@@ -304,6 +320,11 @@ document.getElementById('advanceInput').addEventListener('input', updateDisplay)
 document.getElementById('customerName').addEventListener('input', updateDisplay);
 
 document.getElementById('saveBillBtn')?.addEventListener('click', function() {
+    if (this.disabled || this.textContent === 'Saved') {
+        showAlert('Bill is already saved!');
+        return;
+    }
+
     const action = document.getElementById('billAction').value;
     const customerName = document.getElementById('customerName').value.trim();
 
@@ -320,7 +341,8 @@ document.getElementById('saveBillBtn')?.addEventListener('click', function() {
 
     const advance = parseFloat(document.getElementById('advanceInput').value) || 0;
     if (action === 'advance' && advance <= 0) {
-        showAlert('Enter advance amount');
+        showAlert('Advance Amount is required and must be greater than 0!');
+        document.getElementById('advanceInput').focus();
         return;
     }
 
@@ -337,38 +359,36 @@ document.getElementById('saveBillBtn')?.addEventListener('click', function() {
         data.append('advance_payment', advance);
     } else {
         data.append('ajax_mark_paid', '1');
-        data.append('advance_payment', advance);
     }
 
     fetch('', { method: 'POST', body: data })
     .then(r => r.json())
     .then(d => {
         if (d.success) {
+            // Mark as permanently saved
+            this.textContent = 'Saved';
+            this.style.background = '#95a5a6';
+            this.style.cursor = 'not-allowed';
+            document.getElementById('billAction').disabled = true;
+
             if (action === 'advance') {
-                // ADVANCE: Show success + KEEP the advance amount visible (NO reload!)
-                showAlert('Advance Payment Saved Successfully!You can now print the bill.');
-                // Do nothing else → page stays, advance amount remains as typed
+                showAlert('Advance Payment Saved Successfully!<br>You can now print the bill.');
             } else {
-                // FULL PAYMENT: Save + Print immediately
                 showAlert('Full Payment Completed! Printing...');
-                setTimeout(() => {
-                    window.print();
-                }, 800);
+                setTimeout(() => window.print(), 800);
             }
-        }
-            else {
-            showAlert(d.error || 'Failed to save');
+        } else {
+            showAlert(d.error || 'Failed to save bill');
             this.disabled = false;
             this.textContent = 'Save Bill';
         }
     })
     .catch(() => {
-        showAlert('Network error');
+        showAlert('Connection error. Please try again.');
         this.disabled = false;
         this.textContent = 'Save Bill';
     });
 });
-
 // PRINT BUTTON (new)
 document.getElementById('printBtn')?.addEventListener('click', () => window.print());
 
@@ -385,8 +405,32 @@ function showAlert(msg) {
 function closeAlert() {
     document.getElementById('alertOverlay').style.display = 'none';
     document.getElementById('alertBox').style.display = 'none';
+    // Reset button text
+    const okBtn = document.querySelector('#alertBox button');
+    if (okBtn) okBtn.textContent = 'OK';
+    okBtn.onclick = null;
+    document.getElementById('alertOverlay').onclick = null;
 }
+function confirmNewBill() {
+    document.getElementById('alertMessage').innerHTML = 
+        'Are you sure you want to start a <strong>New Bill</strong>?<br><br>All current items and selections will be cleared.';
+    
+    document.getElementById('alertOverlay').style.display = 'block';
+    document.getElementById('alertBox').style.display = 'block';
 
+    const okBtn = document.querySelector('#alertBox button');
+    okBtn.textContent = 'Yes, Start New Bill';
+    okBtn.onclick = function() {
+        closeAlert();
+        // Submit hidden form — no URL data!
+        document.getElementById('newBillForm').submit();
+    };
+
+    document.getElementById('alertOverlay').onclick = function() {
+        closeAlert();
+        document.querySelector('#alertBox button').textContent = 'OK';
+    };
+}
 updateDisplay();
 </script>
 </body>
