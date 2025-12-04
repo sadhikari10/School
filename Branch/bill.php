@@ -117,11 +117,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_save_advance']))
         echo json_encode(['success' => false, 'error' => 'Invalid advance amount']);
         exit;
     }
-
-    $pdo->prepare("INSERT INTO advance_payment 
-    (bill_number, branch, fiscal_year, school_name, customer_name, advance_amount, total, payment_method, printed_by, bs_datetime, items_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-    ->execute([$bill_number, $location, $fiscal_year, $school_name, $customer_name, $advance_amount, $subtotal, $payment_method, $printed_by, $print_time_db, $items_json]);
+$pdo->prepare("INSERT INTO advance_payment 
+    (bill_number, branch, outlet_id, fiscal_year, school_name, customer_name, advance_amount, total, payment_method, printed_by, bs_datetime, items_json, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unpaid')")
+    ->execute([
+        $bill_number,
+        $location,
+        $outlet_id,                    // ← NEW: outlet_id from session
+        $fiscal_year,
+        $school_name,
+        $customer_name,
+        $advance_amount,
+        $subtotal,
+        $payment_method,
+        $printed_by,
+        $print_time_db,
+        $items_json
+    ]);
     echo json_encode(['success' => true, 'bill_number' => $bill_number]);
     exit;
 }
@@ -142,11 +154,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
         exit;
     }
 
-    $pdo->prepare("INSERT INTO sales 
-        (bill_number, branch, fiscal_year, school_name, customer_name, total, payment_method, printed_by, printed_at, bs_datetime, items_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)")
-        ->execute([$bill_number, $location, $fiscal_year, $school_name, $customer_name, $subtotal, $payment_method, $printed_by, $print_time_db, $items_json]);
-
+   $pdo->prepare("INSERT INTO sales 
+    (bill_number, branch, outlet_id, fiscal_year, school_name, customer_name, total, payment_method, printed_by, printed_at, bs_datetime, items_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)")
+    ->execute([
+        $bill_number,
+        $location,
+        $outlet_id,                    // ← NEW: outlet_id
+        $fiscal_year,
+        $school_name,
+        $customer_name,
+        $subtotal,
+        $payment_method,
+        $printed_by,
+        $print_time_db,
+        $items_json
+    ]);
     unset($_SESSION['temp_bill_items'], $_SESSION['temp_subtotal'], $_SESSION['temp_customer_name'], $_SESSION['temp_items_json'], $_SESSION['temp_school_name']);
 
     echo json_encode(['success' => true, 'bill_number' => $bill_number]);
@@ -372,7 +395,7 @@ document.getElementById('saveBillBtn')?.addEventListener('click', function() {
             document.getElementById('billAction').disabled = true;
 
             if (action === 'advance') {
-                showAlert('Advance Payment Saved Successfully!<br>You can now print the bill.');
+                showAlert('Advance Payment Saved Successfully!You can now print the bill.');
             } else {
                 showAlert('Full Payment Completed! Printing...');
                 setTimeout(() => window.print(), 800);
