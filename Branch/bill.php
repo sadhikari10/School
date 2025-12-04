@@ -31,18 +31,32 @@ $bs_parts = explode(' ', $print_time_db);
 $bs_date = $bs_parts[0];
 $fiscal_year = get_fiscal_year($bs_date);
 
-function getNextBillNumber($pdo, $branch, $fiscal_year) {
-    $stmt = $pdo->prepare("SELECT COALESCE(MAX(bill_number), 0) + 1 as next_bill 
-                            FROM (
-                                SELECT bill_number FROM sales WHERE branch = ? AND fiscal_year = ?
-                                UNION ALL
-                                SELECT bill_number FROM advance_payment WHERE branch = ? AND fiscal_year = ?
-                            ) combined");
-    $stmt->execute([$branch, $fiscal_year, $branch, $fiscal_year]);
-    return (int)$stmt->fetchColumn();
+function getNextBillNumber($pdo, $outlet_id, $fiscal_year) {
+    // First: Try to get current counter
+    $stmt = $pdo->prepare("SELECT last_bill_number FROM bill_counter WHERE outlet_id = ? AND fiscal_year = ?");
+    $stmt->execute([$outlet_id, $fiscal_year]);
+    $row = $stmt->fetch();
+
+    if ($row) {
+        $next = $row['last_bill_number'] + 1;
+    } else {
+        // First bill of the year → start from 1
+        $next = 1;
+        // Create the row
+        $pdo->prepare("INSERT INTO bill_counter (outlet_id, fiscal_year, last_bill_number) VALUES (?, ?, 0)")
+            ->execute([$outlet_id, $fiscal_year]);
+    }
+
+    return $next;
 }
 
-$bill_number = getNextBillNumber($pdo, $location, $fiscal_year);
+function incrementBillCounter($pdo, $outlet_id, $fiscal_year) {
+    $pdo->prepare("INSERT INTO bill_counter (outlet_id, fiscal_year, last_bill_number) 
+                   VALUES (?, ?, 1)
+                   ON DUPLICATE KEY UPDATE last_bill_number = last_bill_number + 1")
+        ->execute([$outlet_id, $fiscal_year]);
+}
+$bill_number = getNextBillNumber($pdo, $outlet_id, $fiscal_year);
 
 $detailed_items = [];
 $subtotal = 0.0;
@@ -134,6 +148,7 @@ $pdo->prepare("INSERT INTO advance_payment
         $print_time_db,
         $items_json
     ]);
+    incrementBillCounter($pdo, $outlet_id, $fiscal_year);
     echo json_encode(['success' => true, 'bill_number' => $bill_number]);
     exit;
 }
@@ -170,6 +185,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
         $print_time_db,
         $items_json
     ]);
+    incrementBillCounter($pdo, $outlet_id, $fiscal_year);
     unset($_SESSION['temp_bill_items'], $_SESSION['temp_subtotal'], $_SESSION['temp_customer_name'], $_SESSION['temp_items_json'], $_SESSION['temp_school_name']);
 
     echo json_encode(['success' => true, 'bill_number' => $bill_number]);
