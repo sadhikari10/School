@@ -8,65 +8,95 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
-// Get bill number from session (secure POST from advance_payment.php)
+// Get shop_name
+$stmt_user = $pdo->prepare("SELECT shop_name FROM login WHERE id = ?");
+$stmt_user->execute([$_SESSION['user_id']]);
+$shop_name = $stmt_user->fetchColumn() ?: 'Clothes Store';
+
+// Get outlet info: phone + location
+$outlet_id = $_SESSION['outlet_id'] ?? 0;
+$stmt_outlet = $pdo->prepare("SELECT phone_number, location FROM outlets WHERE outlet_id = ? LIMIT 1");
+$stmt_outlet->execute([$outlet_id]);
+$outlet = $stmt_outlet->fetch(PDO::FETCH_ASSOC);
+$phone_number = $outlet['phone_number'] ?? 'N/A';
+$branch_name = $outlet['location'] ?? 'Unknown Branch';
+
+// Get bill number from session
 $bill_number = $_SESSION['complete_bill_number'] ?? 0;
-unset($_SESSION['complete_bill_number']);
 
 if ($bill_number <= 0) {
-    die("Invalid bill number.");
+    die("<h2 style='text-align:center; color:red; margin-top:50px;'>Invalid bill number.</h2>");
 }
 
-// Fetch advance payment record
-$stmt = $pdo->prepare("SELECT * FROM advance_payment WHERE bill_number = ? AND status = 'unpaid' LIMIT 1");
+// Fetch advance record
+$stmt = $pdo->prepare("
+    SELECT ap.*, o.phone_number, o.location AS branch_name 
+    FROM advance_payment ap 
+    LEFT JOIN outlets o ON ap.outlet_id = o.outlet_id 
+    WHERE ap.bill_number = ? AND ap.status = 'unpaid' 
+    LIMIT 1
+");
 $stmt->execute([$bill_number]);
 $advance = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$advance) {
-    die("Bill not found or already paid.");
+    die("<h2 style='text-align:center; color:red; margin-top:50px;'>Bill not found or already paid.</h2>");
 }
 
-// Parse items
-$items = json_decode($advance['items_json'], true);
+$items = json_decode($advance['items_json'], true) ?: [];
 $total = $advance['total'];
 $advance_amount = $advance['advance_amount'];
 $remaining = $total - $advance_amount;
 
 $customer_name = $advance['customer_name'] ?: 'Customer';
-$school_name = $advance['school_name'] ?: '';
+$school_name = $advance['school_name'] ?: '';  // Loaded but NOT shown
 $printed_by = $_SESSION['username'] ?? 'Staff';
-$bs_datetime = $advance['bs_datetime'];
+
+// Current Nepali date/time when printing
+$bs_datetime = nepali_date_time();
+
+$branch_display = $advance['branch_name'] ?? $advance['branch'];
+$phone_display = $advance['phone_number'] ?? $phone_number;
 
 // Handle final payment
+$payment_success = false;
+$error = '';
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize_payment'])) {
     $final_payment = (float)($_POST['final_payment'] ?? 0);
-    $payment_method = $_POST['payment_method'] === 'online' ? 'online' : 'cash';
+    $payment_method = in_array($_POST['payment_method'], ['cash', 'online']) ? $_POST['payment_method'] : 'cash';
 
-    if ($final_payment >= $remaining) {
-        // Mark as paid in advance_payment
-        $pdo->prepare("UPDATE advance_payment SET status = 'paid' WHERE bill_number = ?")
-            ->execute([$bill_number]);
+    if ($final_payment >= $remaining || $final_payment >= $total * 0.95) {
+        try {
+            $pdo->beginTransaction();
 
-        // Insert into sales table
-        $pdo->prepare("INSERT INTO sales 
-            (bill_number, branch, fiscal_year, school_name, customer_name, total, payment_method, printed_by, printed_at, bs_datetime, items_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)")
-            ->execute([
-                $bill_number,
-                $advance['branch'],
-                $advance['fiscal_year'],
-                $advance['school_name'],
-                $advance['customer_name'],
-                $total,
-                $payment_method,
-                $printed_by,
-                $bs_datetime,
-                $advance['items_json']
-            ]);
+            $pdo->prepare("UPDATE advance_payment SET status = 'paid' WHERE bill_number = ?")->execute([$bill_number]);
 
-        // Success
-        $payment_success = true;
+            $pdo->prepare("INSERT INTO sales 
+                (bill_number, branch, outlet_id, fiscal_year, school_name, customer_name, total, payment_method, printed_by, printed_at, bs_datetime, items_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)")
+                ->execute([
+                    $bill_number,
+                    $branch_display,
+                    $outlet_id,
+                    $advance['fiscal_year'],
+                    $school_name,
+                    $customer_name,
+                    $total,
+                    $payment_method,
+                    $printed_by,
+                    $bs_datetime,
+                    $advance['items_json']
+                ]);
+
+            $pdo->commit();
+            $payment_success = true;
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            $error = "Payment failed. Please try again.";
+        }
     } else {
-        $error = "Payment amount is less than remaining!";
+        $error = "Received amount is less than remaining balance!";
     }
 }
 ?>
@@ -79,36 +109,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize_payment'])) 
     <title>Final Bill #<?php echo $bill_number; ?></title>
     <link rel="stylesheet" href="bill.css">
     <style>
-        .final-payment {
-            background: #fff8e1;
-            padding: 20px;
-            border-radius: 12px;
-            margin: 20px 0;
-            border: 2px solid #ffeb3b;
-            text-align: center;
-            font-size: 18px;
+        body { color: #2c3e50; }
+        .payment-box { 
+            background:#f8f9fa; 
+            padding:20px; 
+            border-radius:12px; 
+            margin:20px 0; 
+            border:2px solid #ddd; 
+            text-align:center; 
+            font-size:18px; 
+            color:#2c3e50;
         }
-        .final-payment strong { color: #e67e22; font-size: 24px; }
-        .payment-form { margin: 20px 0; padding: 20px; background: #f8f9fa; border-radius: 12px; }
-        .payment-form input, .payment-form select { padding: 12px; font-size: 16px; margin: 10px; border-radius: 8px; border: 1px solid #ddd; }
-        .btn-final { background: #e67e22; color: white; padding: 14px 30px; font-size: 18px; border: none; border-radius: 10px; cursor: pointer; }
-        .btn-final:hover { background: #d35400; }
+        .payment-box strong { 
+            color:#2c3e50; 
+            font-size:24px; 
+            font-weight:bold;
+        }
+        .form-group { margin:15px 0; text-align:center; }
+        .form-group input, .form-group select { 
+            padding:12px; font-size:16px; margin:5px; border-radius:8px; border:1px solid #ccc; width:250px; 
+        }
+        .btn-pay, .btn-print { 
+            padding:14px 32px; 
+            font-size:18px; 
+            border:none; 
+            border-radius:10px; 
+            cursor:pointer; 
+            font-weight:bold;
+            margin: 0 10px;
+        }
+        .btn-pay { background:#27ae60; color:white; }
+        .btn-pay:hover { background:#219653; }
+        .btn-print { background:#3498db; color:white; }
+        .btn-print:hover { background:#2980b9; }
+        .back-link { 
+            display:inline-block; margin:20px; padding:12px 25px; background:#667eea; color:white; text-decoration:none; border-radius:8px; 
+        }
+        .total-row span { color:#2c3e50 !important; }
+        .total-row.grand-total span { font-weight:bold; }
     </style>
 </head>
 <body>
 
 <div class="bill" id="printableBill">
     <div class="header">
-        <h1><?php echo htmlspecialchars($_SESSION['shop_name'] ?? 'Clothes Store'); ?></h1>
-        <p><?php echo htmlspecialchars($advance['branch']); ?></p>
+        <h1><?php echo htmlspecialchars($shop_name); ?></h1>
+        <?php if ($phone_display !== 'N/A'): ?>
+            <p>Phone: <?php echo htmlspecialchars($phone_display); ?></p>
+        <?php endif; ?>
+        <p><?php echo htmlspecialchars($branch_display); ?></p>
     </div>
 
     <div class="info"><strong>Bill No:</strong> <?php echo $bill_number; ?></div>
     <div class="info"><strong>Date:</strong> <?php echo $bs_datetime; ?></div>
     <div class="info"><strong>Customer:</strong> <?php echo htmlspecialchars($customer_name); ?></div>
-    <?php if ($school_name): ?>
-        <div class="info"><strong>School:</strong> <?php echo htmlspecialchars($school_name); ?></div>
-    <?php endif; ?>
 
     <table>
         <thead>
@@ -130,50 +184,62 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize_payment'])) 
     <div class="total-section">
         <div class="total-row"><span>Sub Total:</span><span>Rs. <?php echo number_format($total, 2); ?></span></div>
         <div class="total-row"><span>Advance Paid:</span><span>Rs. <?php echo number_format($advance_amount, 2); ?></span></div>
-        <div class="total-row"><span style="font-weight:bold; color:#e67e22;">Remaining:</span>
-            <span style="font-weight:bold; color:#e67e22;">Rs. <?php echo number_format($remaining, 2); ?></span>
+        <div class="total-row" style="font-weight:bold;">
+            <span>Remaining Amount:</span>
+            <span>Rs. <?php echo number_format($remaining, 2); ?></span>
         </div>
         <div class="total-row grand-total">
-            <span>GRAND TOTAL:</span><span>Rs. <?php echo number_format($total, 2); ?></span>
+            <span>GRAND TOTAL:</span>
+            <span>Rs. <?php echo number_format($total, 2); ?></span>
         </div>
     </div>
 
-    <div class="footer-note">Thank you for your payment!</div>
-    <div class="not-tax">FINAL BILL - PAYMENT COMPLETED</div>
+    <div class="footer-note">Note: Exchange available within seven days</div>
+    <div class="not-tax">This is not a tax bill</div>
 </div>
 
-<?php if (!isset($payment_success)): ?>
-<div class="no-print payment-form">
-    <div class="final-payment">
-        <strong>Remaining Amount: Rs. <?php echo number_format($remaining, 2); ?></strong>
-    </div>
-
-    <?php if (isset($error)): ?>
-        <div style="color:red; font-weight:bold; margin:15px;"><?php echo $error; ?></div>
+<?php if (!$payment_success): ?>
+<div class="no-print payment-box">
+    <strong>Remaining to Pay: Rs. <?php echo number_format($remaining, 2); ?></strong>
+    <?php if ($error): ?>
+        <p style="color:red; font-weight:bold; margin:10px 0;"><?php echo $error; ?></p>
     <?php endif; ?>
 
-    <form method="POST">
-        <input type="number" name="final_payment" min="<?php echo $remaining; ?>" step="1" 
-               placeholder="Enter amount received" required style="width:250px;">
+    <form method="POST" class="form-group" style="display:inline-block;">
+        <input type="number" name="final_payment" min="<?php echo max(1, $remaining - 10); ?>" 
+               placeholder="Amount received" value="<?php echo $remaining; ?>" required>
         <select name="payment_method">
             <option value="cash">Cash</option>
             <option value="online">Online</option>
         </select>
-        <button type="submit" name="finalize_payment" class="btn-final">
-            Complete Payment & Print Final Bill
+        <br><br>
+        <button type="submit" name="finalize_payment" class="btn-pay">
+            Complete Payment
         </button>
     </form>
+
+    <button type="button" class="btn-print" onclick="window.print();">
+        Print Bill
+    </button>
 </div>
 <?php else: ?>
+<div class="no-print payment-box">
+    <p style="color:green; font-size:20px; font-weight:bold;">Payment completed successfully!</p>
+    <button type="button" class="btn-print" onclick="window.print();">
+        Print Final Bill
+    </button>
+</div>
+
 <script>
-    alert("Final Payment Completed! Printing bill...");
-    window.print();
-    setTimeout(() => { window.location.href = 'advance_payment.php'; }, 2000);
+    // Optional: Auto-print once after successful payment
+    alert("Payment completed successfully!");
+    // Uncomment the line below if you want auto-print after payment
+    // window.print();
 </script>
 <?php endif; ?>
 
 <div class="no-print" style="text-align:center; margin:30px;">
-    <a href="advance_payment.php" class="back-btn">Back to Advance List</a>
+    <a href="advance_payment.php" class="back-link">Back to Advance List</a>
 </div>
 
 </body>
