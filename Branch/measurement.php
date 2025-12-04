@@ -11,117 +11,88 @@ if (!isset($_SESSION['user_id'])) {
 $outlet_id = $_SESSION['outlet_id'] ?? 0;
 $username = $_SESSION['username'] ?? 'Staff';
 
-function get_current_fiscal_year() {
-    $bs = nepali_date_time();
-    $parts = explode('-', $bs);
-    $year = (int)$parts[0];
-    $month = (int)$parts[1];
-    return ($month >= 4) ? "$year/" . ($year + 1) : ($year - 1) . "/$year";
+// --- REQUIRED FUNCTION (Nepali Fiscal Year) ---
+if (!function_exists('get_current_fiscal_year')) {
+    function get_current_fiscal_year() {
+        $bs = nepali_date_time();  // From nepali_date.php
+        $parts = explode('-', $bs);
+        $year = (int)$parts[0];
+        $month = (int)$parts[1];
+        return ($month >= 4) ? "$year/" . ($year + 1) : ($year - 1) . "/$year";
+    }
 }
-
 $fiscal_year = get_current_fiscal_year();
 
-// Safe bill number generation
-function getNextMeasurementBill($pdo, $outlet_id, $fiscal_year) {
-    $pdo->beginTransaction();
-    try {
-        $stmt = $pdo->prepare("SELECT last_bill_number FROM bill_counter WHERE outlet_id = ? AND fiscal_year = ? FOR UPDATE");
-        $stmt->execute([$outlet_id, $fiscal_year]);
-        $row = $stmt->fetch();
-
-        if ($row) {
-            $next = $row['last_bill_number'] + 1;
-            $pdo->prepare("UPDATE bill_counter SET last_bill_number = ? WHERE outlet_id = ? AND fiscal_year = ?")
-                ->execute([$next, $outlet_id, $fiscal_year]);
-        } else {
-            $next = 1;
-            $pdo->prepare("INSERT INTO bill_counter (outlet_id, fiscal_year, last_bill_number) VALUES (?, ?, ?)")
-                ->execute([$outlet_id, $fiscal_year, 1]);
-        }
-        $pdo->commit();
-        return $next;
-    } catch (Exception $e) {
-        $pdo->rollBack();
-        throw $e;
-    }
-}
+// --- Check if linked to a uniform bill ---
+$linked_bill = $_GET['bill'] ?? 0;
+$linked_bill = (int)$linked_bill;
+$is_linked_mode = $linked_bill > 0;
 
 $success = $error = '';
-$edit_mode = false;
-$edit_id = 0;
-$edit_name = $edit_phone = '';
-$edit_measurements = [];
-$last_saved_bill = 0;
 
-// Handle Edit (via POST)
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['load_edit'])) {
-    $edit_id = (int)$_POST['record_id'];
-    $stmt = $pdo->prepare("SELECT * FROM customer_measurements WHERE id = ?");
-    $stmt->execute([$edit_id]);
-    $row = $stmt->fetch(PDO::FETCH_ASSOC);
-    if ($row) {
-        $edit_mode = true;
-        $edit_name = $row['customer_name'];
-        $edit_phone = $row['phone'] ?? '';
-        $edit_measurements = json_decode($row['measurements'], true) ?: [];
-        $last_saved_bill = $row['bill_number'];
-    }
-}
-
-// Save Measurement (only save)
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_measurement'])) {
-    $customer_name = trim($_POST['customer_name']);
+// --- Save temporarily to SESSION only ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_temp_measurement'])) {
+    $customer_name = trim($_POST['customer_name'] ?? '');
     $phone = trim($_POST['phone'] ?? '');
 
     if (empty($customer_name)) {
         $error = "Customer name is required!";
     } else {
-        $measurements = [];
+        $items = [];
+        $total_price = 0;
+
         if (isset($_POST['category']) && is_array($_POST['category'])) {
-            foreach ($_POST['category'] as $idx => $cat) {
-                $cat = trim($cat);
-                if ($cat === '') continue;
+            foreach ($_POST['category'] as $idx => $garment) {
+                $garment = trim($garment);
+                $price = (float)($_POST['price'][$idx] ?? 0);
+
+                if ($garment === '' || $price <= 0) continue;
+
                 $fields = $_POST['field_name'][$idx] ?? [];
                 $values = $_POST['field_value'][$idx] ?? [];
-                $group = [];
+                $measurements = [];
+
                 for ($i = 0; $i < count($fields); $i++) {
-                    if (trim($fields[$i]) !== '' && trim($values[$i]) !== '') {
-                        $group[trim($fields[$i])] = trim($values[$i]);
+                    $f = trim($fields[$i] ?? '');
+                    $v = trim($values[$i] ?? '');
+                    if ($f !== '' && $v !== '') {
+                        $measurements[$f] = $v;
                     }
                 }
-                if (!empty($group)) $measurements[$cat] = $group;
+
+                $items[] = [
+                    'garment' => $garment,
+                    'price' => $price,
+                    'measurements' => $measurements
+                ];
+                $total_price += $price;
             }
         }
 
-        if (empty($measurements)) {
-            $error = "Please add at least one measurement.";
+        if (empty($items)) {
+            $error = "Please add at least one garment with a valid price.";
         } else {
-            $json = json_encode($measurements, JSON_UNESCAPED_UNICODE);
-            $bs_datetime = nepali_date_time();
+            $_SESSION['temp_custom_order'] = [
+                'bill_number' => $is_linked_mode ? $linked_bill : 0,
+                'customer_name' => $customer_name,
+                'phone' => $phone,
+                'items' => $items,
+                'total_price' => $total_price,
+                'saved_at' => date('Y-m-d H:i:s')
+            ];
 
-            try {
-                if ($edit_mode && $edit_id > 0) {
-                    $sql = "UPDATE customer_measurements SET customer_name=?, phone=?, measurements=? WHERE id=?";
-                    $pdo->prepare($sql)->execute([$customer_name, $phone, $json, $edit_id]);
-                    $success = "Measurement updated successfully!";
-                    $last_saved_bill = $edit_id > 0 ? ($_POST['current_bill'] ?? 0) : 0;
-                } else {
-                    $bill_number = getNextMeasurementBill($pdo, $outlet_id, $fiscal_year);
-                    $sql = "INSERT INTO customer_measurements 
-                            (bill_number, fiscal_year, customer_name, phone, measurements, created_by, created_at) 
-                            VALUES (?, ?, ?, ?, ?, ?, ?)";
-                    $pdo->prepare($sql)->execute([
-                        $bill_number, $fiscal_year, $customer_name, $phone, $json, $username, $bs_datetime
-                    ]);
-                    $success = "Measurement saved! Bill Number: <strong>#$bill_number</strong>";
-                    $last_saved_bill = $bill_number;
-                }
-            } catch (Exception $e) {
-                $error = "Error saving: " . $e->getMessage();
-            }
+            $success = "Custom stitching items saved successfully!<br>
+                        Total: <strong>Rs. " . number_format($total_price) . "</strong><br><br>
+                        <a href='bill.php' style='background:#8e24aa;color:white;padding:12px 30px;border-radius:8px;text-decoration:none;font-weight:bold;'>
+                            Go to Final Bill →
+                        </a>";
         }
     }
 }
+
+// Load from session if exists
+$temp_data = $_SESSION['temp_custom_order'] ?? null;
+$temp_items = $temp_data['items'] ?? [];
 ?>
 
 <!DOCTYPE html>
@@ -129,163 +100,137 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_measurement'])) 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Customer Measurements</title>
+    <title>Custom Stitching - <?php echo $is_linked_mode ? "Bill #$linked_bill" : "New Order"; ?></title>
     <style>
-        body { font-family: Arial, sans-serif; background: #f0f2f5; margin:0; padding:20px; color:#2c3e50; }
+        body { font-family: Arial, sans-serif; background: #f4f6f9; margin:0; padding:20px; color:#2c3e50; }
         .container { max-width: 1000px; margin: auto; background: white; border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); overflow: hidden; }
-        .header { background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 30px; text-align: center; }
+        .header { background: linear-gradient(135deg, #8e24aa, #9c27b0); color: white; padding: 30px; text-align: center; }
         .header h1 { margin:0; font-size:28px; }
+        .header h2 { margin:10px 0 0; font-size:20px; font-weight:normal; }
         .section { padding: 30px; }
-        input, button { padding: 12px 20px; border-radius: 8px; border: none; font-size: 15px; cursor: pointer; margin: 5px; }
-        input { border: 1px solid #ddd; width: 100%; box-sizing: border-box; }
-        button { color: white; font-weight: bold; }
-        .btn-save { background: #27ae60; }
-        .btn-save:hover { background: #219653; }
-        .btn-bill { background: #3498db; }
-        .btn-bill:hover { background: #2980b9; }
-        .group { background:#f8f9fa; padding:15px; border-radius:10px; margin:15px 0; border:1px dashed #ddd; }
-        .group-header { display:flex; gap:10px; align-items:center; margin-bottom:10px; }
-        .group-header input { flex:1; }
-        .field-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:8px 0; }
-        .add-btn { background:#3498db; padding:8px 16px; font-size:14px; }
-        .remove-btn { background:#e74c3c; padding:8px 12px; font-size:14px; }
-        .back-btn { background:#667eea; padding:14px 30px; font-size:16px; text-decoration:none; display:inline-block; margin-top:20px; border-radius:8px; }
-        .back-btn:hover { background:#5a6fd8; }
+        .info, .error { padding:15px; border-radius:8px; margin:20px 0; text-align:center; font-weight:bold; }
+        .info { background:#d4edda; color:#155724; }
+        .error { background:#f8d7da; color:#721c24; }
+        .group { background:#f8f0ff; padding:20px; border-radius:12px; margin:15px 0; border:2px dashed #8e24aa; }
+        .group-header { display:flex; gap:12px; align-items:center; margin-bottom:15px; flex-wrap:wrap; }
+        .group-header input[type="text"] { flex:1; min-width:200px; padding:12px; border-radius:8px; border:1px solid #ddd; }
+        .price-input { width:130px; padding:12px; border-radius:8px; border:1px solid #8e24aa; font-weight:bold; color:#8e24aa; font-size:16px; }
+        .field-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:8px 0; }
+        .field-row input { padding:10px; border:1px solid #ccc; border-radius:6px; }
+        .add-btn { background:#27ae60; color:white; padding:10px 20px; border:none; border-radius:8px; cursor:pointer; }
+        .remove-btn { background:#e74c3c; color:white; padding:8px 12px; border:none; border-radius:6px; cursor:pointer; }
+        .btn-save { background:#8e24aa; color:white; padding:18px 50px; font-size:20px; border:none; border-radius:12px; cursor:pointer; }
+        .btn-save:hover { background:#6a1b9a; }
+        .skip-link { display:block; text-align:center; margin-top:25px; }
+        .skip-link a { color:#8e24aa; font-weight:bold; font-size:18px; text-decoration:none; }
+        .skip-link a:hover { text-decoration:underline; }
     </style>
 </head>
 <body>
 <div class="container">
     <div class="header">
-        <h1>Customer Measurements</h1>
+        <h1>Custom Stitching Order</h1>
+        <?php if ($is_linked_mode): ?>
+            <h2>Linked to Uniform Bill #<?php echo $linked_bill; ?></h2>
+        <?php else: ?>
+            <h2>Standalone Custom Order</h2>
+        <?php endif; ?>
     </div>
 
     <div class="section">
         <?php if ($success): ?>
-            <div style="background:#d4edda; color:#155724; padding:15px; border-radius:8px; text-align:center; font-weight:bold; margin-bottom:20px;">
-                <?php echo $success; ?>
-            </div>
+            <div class="info"><?php echo $success; ?></div>
         <?php endif; ?>
         <?php if ($error): ?>
-            <div style="background:#f8d7da; color:#721c24; padding:15px; border-radius:8px; text-align:center; font-weight:bold; margin-bottom:20px;">
-                <?php echo $error; ?>
-            </div>
+            <div class="error"><?php echo $error; ?></div>
         <?php endif; ?>
 
         <form method="POST">
-            <input type="hidden" name="save_measurement" value="1">
-            <?php if ($edit_mode): ?>
-                <input type="hidden" name="current_bill" value="<?php echo $last_saved_bill; ?>">
-            <?php endif; ?>
+            <input type="hidden" name="save_temp_measurement" value="1">
 
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:20px;">
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:25px;">
                 <div>
-                    <strong>Customer Name *</strong>
-                    <input type="text" name="customer_name" required value="<?php echo htmlspecialchars($edit_name); ?>">
+                    <strong>Customer Name <span style="color:red;">*</span></strong>
+                    <input type="text" name="customer_name" required value="<?php echo htmlspecialchars($temp_data['customer_name'] ?? ''); ?>" placeholder="Enter full name">
                 </div>
                 <div>
-                    <strong>Phone</strong>
-                    <input type="text" name="phone" value="<?php echo htmlspecialchars($edit_phone); ?>">
+                    <strong>Phone (Optional)</strong>
+                    <input type="text" name="phone" value="<?php echo htmlspecialchars($temp_data['phone'] ?? ''); ?>" placeholder="98xxxxxxxx">
                 </div>
             </div>
 
-            <h3 style="color:#667eea; margin:25px 0 15px;">Measurement Groups</h3>
+            <h3 style="color:#8e24aa; margin:30px 0 15px;">Garments & Measurements</h3>
             <div id="groups">
-                <?php 
-                $group_index = 0;
-                if ($edit_mode && !empty($edit_measurements)): 
-                    foreach ($edit_measurements as $cat => $fields): ?>
-                        <div class="group">
-                            <div class="group-header">
-                                <input type="text" name="category[]" placeholder="e.g. Shirt" value="<?php echo htmlspecialchars($cat); ?>" required>
-                                <button type="button" class="add-btn" onclick="addField(this)">+ Field</button>
-                                <button type="button" class="remove-btn" onclick="this.closest('.group').remove()">Remove</button>
-                            </div>
-                            <?php foreach ($fields as $k => $v): ?>
-                                <div class="field-row">
-                                    <input type="text" name="field_name[<?php echo $group_index; ?>][]" placeholder="Field" value="<?php echo htmlspecialchars($k); ?>">
-                                    <input type="text" name="field_value[<?php echo $group_index; ?>][]" placeholder="Value" value="<?php echo htmlspecialchars($v); ?>">
-                                </div>
-                            <?php $group_index++; endforeach; ?>
-                        </div>
-                    <?php endforeach; 
-                else: ?>
-                    <div class="group">
-                        <div class="group-header">
-                            <input type="text" name="category[]" placeholder="e.g. Shirt" required>
-                            <button type="button" class="add-btn" onclick="addField(this)">+ Field</button>
-                            <button type="button" class="remove-btn" onclick="this.closest('.group').remove()">Remove</button>
-                        </div>
-                        <div class="field-row">
-                            <input type="text" name="field_name[0][]" placeholder="Length">
-                            <input type="text" name="field_value[0][]" placeholder="40">
-                        </div>
-                    </div>
-                <?php endif; ?>
+                <!-- Dynamic groups will be added here by JavaScript -->
             </div>
 
-            <button type="button" onclick="addGroup()" style="background:#667eea; color:white;">+ Add Garment</button>
+            <button type="button" class="add-btn" onclick="addGroup()">+ Add Another Garment</button>
 
             <div style="text-align:center; margin-top:40px;">
-                <button type="submit" class="btn-save" style="padding:18px 50px; font-size:20px;">
-                    Save Measurement
+                <button type="submit" class="btn-save">
+                    Save Custom Items & Go to Final Bill
                 </button>
-
-                <?php if ($last_saved_bill > 0): ?>
-                    <form method="POST" action="measurement_bill.php" style="display:inline; margin-left:20px;">
-                        <input type="hidden" name="view_bill" value="<?php echo $last_saved_bill; ?>">
-                        <button type="submit" class="btn-bill" style="padding:18px 50px; font-size:20px;">
-                            Go to Bill #<?php echo $last_saved_bill; ?>
-                        </button>
-                    </form>
-                <?php endif; ?>
             </div>
         </form>
-        <!-- Add this button anywhere in the bottom section, e.g. near "Back to Dashboard" -->
 
-<div style="text-align:center; padding:20px;">
-    <a href="dashboard.php" class="back-btn">Back to Dashboard</a>
-    
-    <!-- NEW BUTTON: Go to Measurement List -->
-    <a href="measurement_list.php" class="back-btn" style="background:#9b59b6; margin-left:15px;">
-        View All Measurements
-    </a>
-</div>
+        <div class="skip-link">
+            <a href="bill.php">Skip Custom Stitching & Go to Bill →</a>
+        </div>
     </div>
-
 </div>
 
 <script>
-let groupIndex = <?php echo $edit_mode ? count($edit_measurements) : 1; ?>;
+// Load saved items from session
+const savedItems = <?php echo json_encode($temp_items); ?>;
+let groupIndex = 0;
 
-function addGroup() {
+function addGroup(garment = '', price = '', measurements = {}) {
     const container = document.getElementById('groups');
     const div = document.createElement('div');
     div.className = 'group';
     div.innerHTML = `
         <div class="group-header">
-            <input type="text" name="category[]" placeholder="e.g. Pant" required>
-            <button type="button" class="add-btn" onclick="addField(this)">+ Field</button>
+            <input type="text" name="category[]" placeholder="e.g. Shirt, Pant, Coat, Kurta" value="${garment}" required>
+            <input type="number" name="price[]" class="price-input" placeholder="Price" min="1" step="1" value="${price}" required>
             <button type="button" class="remove-btn" onclick="this.closest('.group').remove()">Remove</button>
         </div>
-        <div class="field-row">
-            <input type="text" name="field_name[${groupIndex}][]" placeholder="Waist">
-            <input type="text" name="field_value[${groupIndex}][]" placeholder="32">
+        <div class="fields-container">
+            <div class="field-row">
+                <input type="text" name="field_name[${groupIndex}][]" placeholder="e.g. Length, Chest, Waist">
+                <input type="text" name="field_value[${groupIndex}][]" placeholder="e.g. 40, 42, 32">
+            </div>
         </div>
+        <button type="button" class="add-btn" onclick="addField(this)" style="margin-top:10px; font-size:14px;">+ Add Measurement Field</button>
     `;
     container.appendChild(div);
+
+    // Add saved measurements
+    Object.entries(measurements).forEach(([field, value]) => {
+        addField(div.querySelector('.add-btn'), field, value);
+    });
+
     groupIndex++;
 }
 
-function addField(btn) {
-    const group = btn.closest('.group');
+function addField(btn, fieldName = '', fieldValue = '') {
+    const container = btn.closest('.group').querySelector('.fields-container');
     const row = document.createElement('div');
     row.className = 'field-row';
-    const index = group.querySelector('input[name^="field_name"]')?.name.match(/\[(\d+)\]/)?.[1] || (groupIndex - 1);
+    const idx = groupIndex - 1;
     row.innerHTML = `
-        <input type="text" name="field_name[${index}][]" placeholder="Field">
-        <input type="text" name="field_value[${index}][]" placeholder="Value">
+        <input type="text" name="field_name[${idx}][]" placeholder="Field name" value="${fieldName}">
+        <input type="text" name="field_value[${idx}][]" placeholder="Value" value="${fieldValue}">
     `;
-    group.appendChild(row);
+    container.appendChild(row);
+}
+
+// Load saved items or start with one blank
+if (savedItems.length > 0) {
+    savedItems.forEach(item => {
+        addGroup(item.garment, item.price, item.measurements);
+    });
+} else {
+    addGroup(); // Start with one empty garment
 }
 </script>
 </body>
