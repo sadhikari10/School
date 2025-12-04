@@ -121,10 +121,7 @@ if (isset($_POST['select_school'])) {
 
             <div style="margin-top:40px; text-align:center;">
                 <a href="advance_payment.php" class="logout-btn" style="background:#667eea; margin-right:15px; padding:12px 25px;">
-                    Advance Collection
-                </a>
-                <a href="measurement.php" class="logout-btn" style="background:#667eea; margin-right:15px; padding:12px 25px;">
-                    Take Measurement
+                    Clothe Collection
                 </a>
                 <a href="logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
                     Logout
