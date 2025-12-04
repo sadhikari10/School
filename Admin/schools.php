@@ -43,7 +43,9 @@ if (isset($_POST['add_school'])) {
             $_SESSION['success'] = "School added successfully!";
         }
     }
-    header("Location: dashboard.php");
+
+    // Redirect back to this same page to avoid form resubmission and keep the user here
+    header("Location: " . $_SERVER['PHP_SELF']);
     exit();
 }
 
@@ -51,7 +53,7 @@ if (isset($_POST['add_school'])) {
 if (isset($_POST['save_edit'])) {
     $school_id = (int)$_POST['edit_school_id'];
     $new_name  = trim($_POST['edit_school_name']);
-    
+
     if (empty($new_name)) {
         $_SESSION['error'] = "School name cannot be empty.";
     } else {
@@ -65,7 +67,9 @@ if (isset($_POST['save_edit'])) {
             $_SESSION['success'] = "School name updated!";
         }
     }
-    header("Location: dashboard.php");
+
+    // Redirect back to this same page so the admin stays on schools.php
+    header("Location: " . $_SERVER['PHP_SELF']);
     exit();
 }
 

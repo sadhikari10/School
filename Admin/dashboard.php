@@ -18,6 +18,11 @@ $total_schools = $total_schools->fetchColumn();
 $total_items = $pdo->prepare("SELECT COUNT(*) FROM items WHERE outlet_id = ?");
 $total_items->execute([$outlet_id]);
 $total_items = $total_items->fetchColumn();
+
+$stmt = $pdo->prepare("SELECT COUNT(*) as brand_count FROM brands WHERE outlet_id = ?");
+$stmt->execute([$outlet_id]);
+$brandCount = $stmt->fetchColumn();
+
 ?>
 
 <!DOCTYPE html>
@@ -160,6 +165,13 @@ $total_items = $total_items->fetchColumn();
                 <i class="fas fa-tshirt"></i>
                 <h3><?php echo $total_items; ?></h3>
                 <p>Total Items</p>
+            </a>
+
+            <!-- Brand Items -->
+             <a href="brand.php" class="card">
+                <i class="fas fa-tags"></i>
+                <h3><?php echo $brandCount; ?></h3>
+                <p>Brand Items</p>
             </a>
 
             <!-- Reports -->
