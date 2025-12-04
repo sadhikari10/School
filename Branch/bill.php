@@ -234,8 +234,8 @@ if (isset($_GET['clear_dashboard'])) {
     <div class="control-row buttons-row">
         <select id="billAction">
             <option value="">-- Select Action --</option>
-            <option value="advance">Save as Advance</option>
-            <option value="paid">Mark as Paid & Print</option>
+            <option value="advance">Advance Payment</option>
+            <option value="paid">Full Payment</option>
         </select>
 
         <button id="saveBillBtn">Save Bill</button>   <!-- RENAMED -->
@@ -344,9 +344,19 @@ document.getElementById('saveBillBtn')?.addEventListener('click', function() {
     .then(r => r.json())
     .then(d => {
         if (d.success) {
-            showAlert(action === 'advance' ? 'Advance saved!' : 'Bill saved & ready to print!');
-            setTimeout(() => action === 'paid' ? window.print() : location.reload(), 1200);
-        } else {
+            if (action === 'advance') {
+                // ADVANCE: Show success + KEEP the advance amount visible (NO reload!)
+                showAlert('Advance Payment Saved Successfully!You can now print the bill.');
+                // Do nothing else → page stays, advance amount remains as typed
+            } else {
+                // FULL PAYMENT: Save + Print immediately
+                showAlert('Full Payment Completed! Printing...');
+                setTimeout(() => {
+                    window.print();
+                }, 800);
+            }
+        }
+            else {
             showAlert(d.error || 'Failed to save');
             this.disabled = false;
             this.textContent = 'Save Bill';
