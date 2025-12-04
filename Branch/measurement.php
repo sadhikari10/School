@@ -1,44 +1,81 @@
 <?php
 session_start();
 require '../Common/connection.php';
+require '../Common/nepali_date.php';
 
 if (!isset($_SESSION['user_id'])) {
     header('Location: ../Common/login.php');
     exit();
 }
 
-$success = $error = '';
-$edit_mode = false;
-$edit_bill = $edit_name = $edit_phone = '';
-$edit_measurements = [];
+$outlet_id = $_SESSION['outlet_id'] ?? 0;
+$username = $_SESSION['username'] ?? 'Staff';
 
-// Edit existing
-if (isset($_GET['edit'])) {
-    $bill = (int)$_GET['edit'];
-    $stmt = $pdo->prepare("SELECT * FROM customer_measurements WHERE bill_number = ?");
-    $stmt->execute([$bill]);
-    $row = $stmt->fetch(PDO::FETCH_ASSOC);
-    if ($row) {
-        $edit_mode = true;
-        $edit_bill = $row['bill_number'];
-        $edit_name = $row['customer_name'];
-        $edit_phone = $row['phone'];
-        $edit_measurements = json_decode($row['measurements'], true) ?: [];
+function get_current_fiscal_year() {
+    $bs = nepali_date_time();
+    $parts = explode('-', $bs);
+    $year = (int)$parts[0];
+    $month = (int)$parts[1];
+    return ($month >= 4) ? "$year/" . ($year + 1) : ($year - 1) . "/$year";
+}
+
+$fiscal_year = get_current_fiscal_year();
+
+// Safe bill number generation
+function getNextMeasurementBill($pdo, $outlet_id, $fiscal_year) {
+    $pdo->beginTransaction();
+    try {
+        $stmt = $pdo->prepare("SELECT last_bill_number FROM bill_counter WHERE outlet_id = ? AND fiscal_year = ? FOR UPDATE");
+        $stmt->execute([$outlet_id, $fiscal_year]);
+        $row = $stmt->fetch();
+
+        if ($row) {
+            $next = $row['last_bill_number'] + 1;
+            $pdo->prepare("UPDATE bill_counter SET last_bill_number = ? WHERE outlet_id = ? AND fiscal_year = ?")
+                ->execute([$next, $outlet_id, $fiscal_year]);
+        } else {
+            $next = 1;
+            $pdo->prepare("INSERT INTO bill_counter (outlet_id, fiscal_year, last_bill_number) VALUES (?, ?, ?)")
+                ->execute([$outlet_id, $fiscal_year, 1]);
+        }
+        $pdo->commit();
+        return $next;
+    } catch (Exception $e) {
+        $pdo->rollBack();
+        throw $e;
     }
 }
 
-// Save / Update
+$success = $error = '';
+$edit_mode = false;
+$edit_id = 0;
+$edit_name = $edit_phone = '';
+$edit_measurements = [];
+$last_saved_bill = 0;
+
+// Handle Edit (via POST)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['load_edit'])) {
+    $edit_id = (int)$_POST['record_id'];
+    $stmt = $pdo->prepare("SELECT * FROM customer_measurements WHERE id = ?");
+    $stmt->execute([$edit_id]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($row) {
+        $edit_mode = true;
+        $edit_name = $row['customer_name'];
+        $edit_phone = $row['phone'] ?? '';
+        $edit_measurements = json_decode($row['measurements'], true) ?: [];
+        $last_saved_bill = $row['bill_number'];
+    }
+}
+
+// Save Measurement (only save)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_measurement'])) {
-    $bill_number = (int)trim($_POST['bill_number']);
     $customer_name = trim($_POST['customer_name']);
     $phone = trim($_POST['phone'] ?? '');
 
-    if ($bill_number <= 0) {
-        $error = "Valid Bill Number is required!";
-    } elseif (empty($customer_name)) {
+    if (empty($customer_name)) {
         $error = "Customer name is required!";
     } else {
-        // Collect grouped measurements
         $measurements = [];
         if (isset($_POST['category']) && is_array($_POST['category'])) {
             foreach ($_POST['category'] as $idx => $cat) {
@@ -52,42 +89,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_measurement'])) 
                         $group[trim($fields[$i])] = trim($values[$i]);
                     }
                 }
-                if (!empty($group)) {
-                    $measurements[$cat] = $group;
-                }
+                if (!empty($group)) $measurements[$cat] = $group;
             }
         }
 
         if (empty($measurements)) {
-            $error = "Please add at least one measurement group.";
+            $error = "Please add at least one measurement.";
         } else {
             $json = json_encode($measurements, JSON_UNESCAPED_UNICODE);
+            $bs_datetime = nepali_date_time();
 
             try {
-                if ($edit_mode) {
-                    $sql = "UPDATE customer_measurements SET customer_name=?, phone=?, measurements=? WHERE bill_number=?";
-                    $pdo->prepare($sql)->execute([$customer_name, $phone, $json, $bill_number]);
-                    $success = "Measurement updated for Bill #$bill_number";
+                if ($edit_mode && $edit_id > 0) {
+                    $sql = "UPDATE customer_measurements SET customer_name=?, phone=?, measurements=? WHERE id=?";
+                    $pdo->prepare($sql)->execute([$customer_name, $phone, $json, $edit_id]);
+                    $success = "Measurement updated successfully!";
+                    $last_saved_bill = $edit_id > 0 ? ($_POST['current_bill'] ?? 0) : 0;
                 } else {
-                    $sql = "INSERT INTO customer_measurements (bill_number, customer_name, phone, measurements, created_by) 
-                            VALUES (?, ?, ?, ?, ?)";
-                    $pdo->prepare($sql)->execute([$bill_number, $customer_name, $phone, $json, $_SESSION['username'] ?? 'Staff']);
-                    $success = "Measurement saved for Bill #$bill_number";
+                    $bill_number = getNextMeasurementBill($pdo, $outlet_id, $fiscal_year);
+                    $sql = "INSERT INTO customer_measurements 
+                            (bill_number, fiscal_year, customer_name, phone, measurements, created_by, created_at) 
+                            VALUES (?, ?, ?, ?, ?, ?, ?)";
+                    $pdo->prepare($sql)->execute([
+                        $bill_number, $fiscal_year, $customer_name, $phone, $json, $username, $bs_datetime
+                    ]);
+                    $success = "Measurement saved! Bill Number: <strong>#$bill_number</strong>";
+                    $last_saved_bill = $bill_number;
                 }
             } catch (Exception $e) {
-                $error = "Bill number already exists or database error.";
+                $error = "Error saving: " . $e->getMessage();
             }
         }
     }
-}
-
-// Search by Bill Number
-$search = trim($_GET['search'] ?? '');
-$records = [];
-if ($search !== '') {
-    $stmt = $pdo->prepare("SELECT * FROM customer_measurements WHERE bill_number LIKE ? ORDER BY id DESC");
-    $stmt->execute(["%$search%"]);
-    $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 ?>
 
@@ -103,44 +136,48 @@ if ($search !== '') {
         .header { background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 30px; text-align: center; }
         .header h1 { margin:0; font-size:28px; }
         .section { padding: 30px; }
-        input, button { padding: 12px; border-radius: 8px; border: 1px solid #ddd; font-size: 15px; }
-        input:focus { outline:none; border-color:#667eea; }
-        button { background:#27ae60; color:white; cursor:pointer; font-weight:bold; }
-        button:hover { background:#219653; }
+        input, button { padding: 12px 20px; border-radius: 8px; border: none; font-size: 15px; cursor: pointer; margin: 5px; }
+        input { border: 1px solid #ddd; width: 100%; box-sizing: border-box; }
+        button { color: white; font-weight: bold; }
+        .btn-save { background: #27ae60; }
+        .btn-save:hover { background: #219653; }
+        .btn-bill { background: #3498db; }
+        .btn-bill:hover { background: #2980b9; }
         .group { background:#f8f9fa; padding:15px; border-radius:10px; margin:15px 0; border:1px dashed #ddd; }
         .group-header { display:flex; gap:10px; align-items:center; margin-bottom:10px; }
         .group-header input { flex:1; }
         .field-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:8px 0; }
         .add-btn { background:#3498db; padding:8px 16px; font-size:14px; }
         .remove-btn { background:#e74c3c; padding:8px 12px; font-size:14px; }
-        .search-box { text-align:center; margin:20px 0; }
-        .search-box input { width:300px; padding:14px; }
-        .result { background:#f8f9fa; padding:20px; border-radius:12px; margin:15px 0; border-left:5px solid #667eea; }
-        .back-btn { display:inline-block; margin:20px; padding:14px 30px; background:#667eea; color:white; text-decoration:none; border-radius:10px; }
+        .back-btn { background:#667eea; padding:14px 30px; font-size:16px; text-decoration:none; display:inline-block; margin-top:20px; border-radius:8px; }
         .back-btn:hover { background:#5a6fd8; }
-        .no-data { text-align:center; padding:60px; color:#95a5a6; font-size:18px; }
     </style>
 </head>
 <body>
 <div class="container">
     <div class="header">
         <h1>Customer Measurements</h1>
-        <p>Record measurements by Bill Number</p>
     </div>
 
     <div class="section">
-        <?php if ($success): ?><p style="color:green; text-align:center; font-weight:bold;">Success: <?php echo $success; ?></p><?php endif; ?>
-        <?php if ($error): ?><p style="color:red; text-align:center; font-weight:bold;">Error: <?php echo $error; ?></p><?php endif; ?>
+        <?php if ($success): ?>
+            <div style="background:#d4edda; color:#155724; padding:15px; border-radius:8px; text-align:center; font-weight:bold; margin-bottom:20px;">
+                <?php echo $success; ?>
+            </div>
+        <?php endif; ?>
+        <?php if ($error): ?>
+            <div style="background:#f8d7da; color:#721c24; padding:15px; border-radius:8px; text-align:center; font-weight:bold; margin-bottom:20px;">
+                <?php echo $error; ?>
+            </div>
+        <?php endif; ?>
 
         <form method="POST">
             <input type="hidden" name="save_measurement" value="1">
-            
-            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:15px; margin-bottom:20px;">
-                <div>
-                    <strong>Bill Number *</strong>
-                    <input type="number" name="bill_number" required value="<?php echo $edit_mode ? $edit_bill : ''; ?>" 
-                           <?php echo $edit_mode ? 'readonly' : ''; ?> placeholder="e.g. 1205">
-                </div>
+            <?php if ($edit_mode): ?>
+                <input type="hidden" name="current_bill" value="<?php echo $last_saved_bill; ?>">
+            <?php endif; ?>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:20px;">
                 <div>
                     <strong>Customer Name *</strong>
                     <input type="text" name="customer_name" required value="<?php echo htmlspecialchars($edit_name); ?>">
@@ -151,25 +188,27 @@ if ($search !== '') {
                 </div>
             </div>
 
-            <h3 style="color:#667eea; margin:25px 0 15px;">Add Measurement Groups</h3>
+            <h3 style="color:#667eea; margin:25px 0 15px;">Measurement Groups</h3>
             <div id="groups">
-                <?php if ($edit_mode && !empty($edit_measurements)): ?>
-                    <?php foreach ($edit_measurements as $cat => $fields): ?>
+                <?php 
+                $group_index = 0;
+                if ($edit_mode && !empty($edit_measurements)): 
+                    foreach ($edit_measurements as $cat => $fields): ?>
                         <div class="group">
                             <div class="group-header">
-                                <input type="text" name="category[]" placeholder="e.g. Shirt, Pant, Kurta" value="<?php echo htmlspecialchars($cat); ?>">
+                                <input type="text" name="category[]" placeholder="e.g. Shirt" value="<?php echo htmlspecialchars($cat); ?>" required>
                                 <button type="button" class="add-btn" onclick="addField(this)">+ Field</button>
                                 <button type="button" class="remove-btn" onclick="this.closest('.group').remove()">Remove</button>
                             </div>
                             <?php foreach ($fields as $k => $v): ?>
                                 <div class="field-row">
-                                    <input type="text" name="field_name[<?php echo count($edit_measurements)-1; ?>][]" placeholder="Field" value="<?php echo htmlspecialchars($k); ?>">
-                                    <input type="text" name="field_value[<?php echo count($edit_measurements)-1; ?>][]" placeholder="Value" value="<?php echo htmlspecialchars($v); ?>">
+                                    <input type="text" name="field_name[<?php echo $group_index; ?>][]" placeholder="Field" value="<?php echo htmlspecialchars($k); ?>">
+                                    <input type="text" name="field_value[<?php echo $group_index; ?>][]" placeholder="Value" value="<?php echo htmlspecialchars($v); ?>">
                                 </div>
-                            <?php endforeach; ?>
+                            <?php $group_index++; endforeach; ?>
                         </div>
-                    <?php endforeach; ?>
-                <?php else: ?>
+                    <?php endforeach; 
+                else: ?>
                     <div class="group">
                         <div class="group-header">
                             <input type="text" name="category[]" placeholder="e.g. Shirt" required>
@@ -177,67 +216,42 @@ if ($search !== '') {
                             <button type="button" class="remove-btn" onclick="this.closest('.group').remove()">Remove</button>
                         </div>
                         <div class="field-row">
-                            <input type="text" name="field_name[0][]" placeholder="e.g. Length">
-                            <input type="text" name="field_value[0][]" placeholder="e.g. 40">
+                            <input type="text" name="field_name[0][]" placeholder="Length">
+                            <input type="text" name="field_value[0][]" placeholder="40">
                         </div>
                     </div>
                 <?php endif; ?>
             </div>
 
-            <button type="button" onclick="addGroup()" style="margin:15px 0; background:#667eea;">+ Add New Category (e.g. Pant)</button>
+            <button type="button" onclick="addGroup()" style="background:#667eea; color:white;">+ Add Garment</button>
 
-            <div style="text-align:center; margin-top:30px;">
-                <button type="submit" style="padding:16px 50px; font-size:18px;">
-                    <?php echo $edit_mode ? 'Update Measurement' : 'Save Measurement'; ?>
+            <div style="text-align:center; margin-top:40px;">
+                <button type="submit" class="btn-save" style="padding:18px 50px; font-size:20px;">
+                    Save Measurement
                 </button>
+
+                <?php if ($last_saved_bill > 0): ?>
+                    <form method="POST" action="measurement_bill.php" style="display:inline; margin-left:20px;">
+                        <input type="hidden" name="view_bill" value="<?php echo $last_saved_bill; ?>">
+                        <button type="submit" class="btn-bill" style="padding:18px 50px; font-size:20px;">
+                            Go to Bill #<?php echo $last_saved_bill; ?>
+                        </button>
+                    </form>
+                <?php endif; ?>
             </div>
         </form>
+        <!-- Add this button anywhere in the bottom section, e.g. near "Back to Dashboard" -->
+
+<div style="text-align:center; padding:20px;">
+    <a href="dashboard.php" class="back-btn">Back to Dashboard</a>
+    
+    <!-- NEW BUTTON: Go to Measurement List -->
+    <a href="measurement_list.php" class="back-btn" style="background:#9b59b6; margin-left:15px;">
+        View All Measurements
+    </a>
+</div>
     </div>
 
-    <!-- Search -->
-    <div class="section">
-        <div class="search-box">
-            <form method="GET">
-                <input type="number" name="search" placeholder="Search by Bill Number" value="<?php echo htmlspecialchars($search); ?>">
-                <button type="submit">Search</button>
-                <?php if ($search): ?><a href="measurement.php"><button type="button" style="background:#95a5a6;">Clear</button></a><?php endif; ?>
-            </form>
-        </div>
-
-        <?php if ($search === ''): ?>
-            <p style="text-align:center; color:#7f8c8d;">Enter a bill number above to view measurements</p>
-        <?php elseif (empty($records)): ?>
-            <div class="no-data">No measurement found for Bill #<?php echo htmlspecialchars($search); ?></div>
-        <?php else: ?>
-            <?php foreach ($records as $row): 
-                $meas = json_decode($row['measurements'], true);
-            ?>
-                <div class="result">
-                    <h3>Bill #<?php echo $row['bill_number']; ?> - <?php echo htmlspecialchars($row['customer_name']); ?>
-                        <?php if ($row['phone']): ?> (<?php echo htmlspecialchars($row['phone']); ?>)<?php endif; ?>
-                        <a href="?edit=<?php echo $row['bill_number']; ?>" style="float:right; color:#3498db; font-size:14px;">Edit</a>
-                    </h3>
-                    <?php foreach ($meas as $cat => $fields): ?>
-                        <div style="margin:15px 0; padding:15px; background:white; border-radius:8px; border:1px solid #eee;">
-                            <strong style="color:#667eea; font-size:18px;"><?php echo htmlspecialchars($cat); ?></strong>
-                            <table width="100%" style="margin-top:10px;">
-                                <?php foreach ($fields as $k => $v): ?>
-                                    <tr>
-                                        <td width="50%" style="padding:5px 0; font-weight:bold;"><?php echo htmlspecialchars($k); ?></td>
-                                        <td style="padding:5px 0;"><?php echo htmlspecialchars($v); ?></td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            </table>
-                        </div>
-                    <?php endforeach; ?>
-                </div>
-            <?php endforeach; ?>
-        <?php endif; ?>
-    </div>
-
-    <div style="text-align:center; padding:20px;">
-        <a href="dashboard.php" class="back-btn">Back to Dashboard</a>
-    </div>
 </div>
 
 <script>
@@ -249,13 +263,13 @@ function addGroup() {
     div.className = 'group';
     div.innerHTML = `
         <div class="group-header">
-            <input type="text" name="category[]" placeholder="e.g. Pant, Kurta" required>
+            <input type="text" name="category[]" placeholder="e.g. Pant" required>
             <button type="button" class="add-btn" onclick="addField(this)">+ Field</button>
             <button type="button" class="remove-btn" onclick="this.closest('.group').remove()">Remove</button>
         </div>
         <div class="field-row">
-            <input type="text" name="field_name[${groupIndex}][]" placeholder="Field name">
-            <input type="text" name="field_value[${groupIndex}][]" placeholder="Value">
+            <input type="text" name="field_name[${groupIndex}][]" placeholder="Waist">
+            <input type="text" name="field_value[${groupIndex}][]" placeholder="32">
         </div>
     `;
     container.appendChild(div);
@@ -266,9 +280,10 @@ function addField(btn) {
     const group = btn.closest('.group');
     const row = document.createElement('div');
     row.className = 'field-row';
+    const index = group.querySelector('input[name^="field_name"]')?.name.match(/\[(\d+)\]/)?.[1] || (groupIndex - 1);
     row.innerHTML = `
-        <input type="text" name="field_name[${groupIndex}][]" placeholder="Field name">
-        <input type="text" name="field_value[${groupIndex}][]" placeholder="Value">
+        <input type="text" name="field_name[${index}][]" placeholder="Field">
+        <input type="text" name="field_value[${index}][]" placeholder="Value">
     `;
     group.appendChild(row);
 }
