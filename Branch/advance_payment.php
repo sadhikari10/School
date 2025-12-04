@@ -8,7 +8,7 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
-// Secure POST → final_bill.php (no URL data)
+// Secure POST → final_bill.php
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['complete_bill'])) {
     $bill_number = (int)$_POST['bill_number'];
     if ($bill_number > 0) {
@@ -18,10 +18,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['complete_bill'])) {
     }
 }
 
-// Only show UNPAID advance bills
-$sql = "SELECT * FROM advance_payment WHERE status = 'unpaid' ORDER BY id DESC";
+// Search & Filter Logic
+$search_bill = trim($_GET['bill'] ?? '');
+$search_customer = trim($_GET['customer'] ?? '');
+$search_date = trim($_GET['date'] ?? '');
+
+$sql = "SELECT * FROM advance_payment WHERE status = 'unpaid'";
+$params = [];
+$types = '';
+
+if ($search_bill !== '') {
+    $sql .= " AND bill_number LIKE ?";
+    $params[] = '%' . $search_bill . '%';
+    $types .= 's';
+}
+if ($search_customer !== '') {
+    $sql .= " AND customer_name LIKE ?";
+    $params[] = '%' . $search_customer . '%';
+    $types .= 's';
+}
+if ($search_date !== '') {
+    $sql .= " AND bs_datetime LIKE ?";
+    $params[] = $search_date . '%';  // Matches full or partial date (e.g. 2081-08, 2081, etc.)
+    $types .= 's';
+}
+
+$sql .= " ORDER BY id DESC";
+
 $stmt = $pdo->prepare($sql);
-$stmt->execute();
+$stmt->execute($params);
 $advances = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 
@@ -37,7 +62,40 @@ $advances = $stmt->fetchAll(PDO::FETCH_ASSOC);
         .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }
         .header h1 { margin: 0; font-size: 28px; font-weight: 600; }
         .header p { margin: 10px 0 0; opacity: 0.95; }
-        .stats { padding: 20px; background: #f8f9fa; border-bottom: 1px solid #eee; font-size: 18px; font-weight: 600; color: #27ae60; text-align: center; }
+
+        .search-bar {
+            padding: 20px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            justify-content: center;
+            align-items: center;
+        }
+        .search-bar input, .search-bar button {
+            padding: 12px 16px;
+            font-size: 15px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .search-bar input {
+            width: 220px;
+        }
+        .search-bar button {
+            background: #667eea;
+            color: white;
+            cursor: pointer;
+            font-weight: bold;
+            border: none;
+        }
+        .search-bar button:hover { background: #5a6fd8; }
+        .clear-btn {
+            background: #95a5a6 !important;
+        }
+        .clear-btn:hover { background: #7f8c8d !important; }
+
+        .stats { padding: 15px; background: #f8f9fa; text-align: center; font-size: 17px; color: #27ae60; font-weight: 600; }
 
         table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
         th { background: #667eea; color: white; padding: 16px 12px; text-align: left; font-weight: 600; position: sticky; top: 0; z-index: 10; }
@@ -58,15 +116,8 @@ $advances = $stmt->fetchAll(PDO::FETCH_ASSOC);
         .date { font-family: 'Courier New', monospace; color: #7f8c8d; }
 
         .action-btn {
-            background: #27ae60;
-            color: white;
-            border: none;
-            padding: 10px 18px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-weight: 600;
-            font-size: 13px;
-            transition: 0.3s;
+            background: #27ae60; color: white; border: none; padding: 10px 18px;
+            border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 13px;
         }
         .action-btn:hover { background: #219653; }
 
@@ -75,6 +126,8 @@ $advances = $stmt->fetchAll(PDO::FETCH_ASSOC);
         .back-btn:hover { background: #5a6fd8; }
 
         @media (max-width: 768px) {
+            .search-bar { flex-direction: column; }
+            .search-bar input { width: 100%; }
             table, thead, tbody, th, td, tr { display: block; }
             thead tr { display: none; }
             tr { margin-bottom: 20px; border: 1px solid #ddd; border-radius: 12px; padding: 15px; }
@@ -90,13 +143,32 @@ $advances = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <p>All advance collections from customers</p>
         </div>
 
+        <!-- Search Bar -->
+        <div class="search-bar">
+            <form method="GET">
+                <input type="text" name="bill" placeholder="Bill Number" value="<?php echo htmlspecialchars($search_bill); ?>">
+                <input type="text" name="customer" placeholder="Customer Name" value="<?php echo htmlspecialchars($search_customer); ?>">
+                <input type="text" name="date" placeholder="Date (e.g. 2081-08-15)" value="<?php echo htmlspecialchars($search_date); ?>">
+                <button type="submit">Search</button>
+                <a href="advance_payment.php"><button type="button" class="clear-btn">Clear</button></a>
+            </form>
+        </div>
+
         <div class="stats">
-            Total Unpaid Advance Bills: <strong><?php echo count($advances); ?></strong>
+            <?php if (!empty($search_bill) || !empty($search_customer) || !empty($search_date)): ?>
+                Search Results: <strong><?php echo count($advances); ?></strong> unpaid advance bill(s) found
+            <?php else: ?>
+                Total Unpaid Advance Bills: <strong><?php echo count($advances); ?></strong>
+            <?php endif; ?>
         </div>
 
         <?php if (empty($advances)): ?>
             <div class="no-data">
-                No pending advance bills. All are completed!
+                <?php if (!empty($search_bill) || !empty($search_customer) || !empty($search_date)): ?>
+                    No advance bills found matching your search.
+                <?php else: ?>
+                    No pending advance bills. All are completed!
+                <?php endif; ?>
             </div>
         <?php else: ?>
             <table>
