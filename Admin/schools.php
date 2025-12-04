@@ -250,7 +250,7 @@ $schools = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             <div class="links">
                 <a href="dashboard.php">Back to dashbaord</a> |
-                <a href="../logout.php">Logout</a>
+                <a href="logout.php">Logout</a>
             </div>
         </div>
     </div>
