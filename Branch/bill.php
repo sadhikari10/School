@@ -119,10 +119,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_save_advance']))
     }
 
     $pdo->prepare("INSERT INTO advance_payment 
-        (bill_number, branch, fiscal_year, school_name, customer_name, advance_amount, payment_method, printed_by, bs_datetime, items_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        ->execute([$bill_number, $location, $fiscal_year, $school_name, $customer_name, $advance_amount, $payment_method, $printed_by, $print_time_db, $items_json]);
-
+    (bill_number, branch, fiscal_year, school_name, customer_name, advance_amount, total, payment_method, printed_by, bs_datetime, items_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    ->execute([$bill_number, $location, $fiscal_year, $school_name, $customer_name, $advance_amount, $subtotal, $payment_method, $printed_by, $print_time_db, $items_json]);
     echo json_encode(['success' => true, 'bill_number' => $bill_number]);
     exit;
 }
@@ -214,8 +213,8 @@ if (isset($_GET['clear_dashboard'])) {
 <div class="no-print controls">
     <!-- Line 1 -->
     <div class="control-row">
-        <label>Customer Name:</label>
-        <input type="text" id="customerName" value="<?php echo htmlspecialchars($customer_name); ?>">
+        <label>Customer Name: <span style="color:red;">*</span></label>
+        <input type="text" id="customerName" value="<?php echo htmlspecialchars($customer_name); ?>" placeholder="Enter customer name" required>
     </div>
 
     <!-- Line 2 -->
@@ -304,22 +303,36 @@ function updateDisplay() {
 document.getElementById('advanceInput').addEventListener('input', updateDisplay);
 document.getElementById('customerName').addEventListener('input', updateDisplay);
 
-// SAVE BILL BUTTON (was Execute)
 document.getElementById('saveBillBtn')?.addEventListener('click', function() {
     const action = document.getElementById('billAction').value;
-    if (!action) return showAlert('Please select an action');
+    const customerName = document.getElementById('customerName').value.trim();
+
+    if (!customerName) {
+        showAlert('Customer name is required!');
+        document.getElementById('customerName').focus();
+        return;
+    }
+
+    if (!action) {
+        showAlert('Please select an action');
+        return;
+    }
+
     const advance = parseFloat(document.getElementById('advanceInput').value) || 0;
+    if (action === 'advance' && advance <= 0) {
+        showAlert('Enter advance amount');
+        return;
+    }
 
     this.disabled = true;
     this.textContent = 'Saving...';
 
     const data = new URLSearchParams({
-        customer_name: document.getElementById('customerName').value,
+        customer_name: customerName,
         payment_method: document.getElementById('paymentMethod').value
     });
 
     if (action === 'advance') {
-        if (advance <= 0) { showAlert('Enter advance amount'); this.disabled = false; this.textContent = 'Save Bill'; return; }
         data.append('ajax_save_advance', '1');
         data.append('advance_payment', advance);
     } else {
@@ -334,10 +347,15 @@ document.getElementById('saveBillBtn')?.addEventListener('click', function() {
             showAlert(action === 'advance' ? 'Advance saved!' : 'Bill saved & ready to print!');
             setTimeout(() => action === 'paid' ? window.print() : location.reload(), 1200);
         } else {
-            showAlert(d.error);
+            showAlert(d.error || 'Failed to save');
             this.disabled = false;
             this.textContent = 'Save Bill';
         }
+    })
+    .catch(() => {
+        showAlert('Network error');
+        this.disabled = false;
+        this.textContent = 'Save Bill';
     });
 });
 
