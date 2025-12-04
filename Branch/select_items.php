@@ -132,163 +132,6 @@ if ($_POST['save_session'] ?? false) {
         transform: translateY(-5px);
         box-shadow: 0 12px 30px rgba(102, 126, 234, 0.25);
     }
-    .actions {
-    display: flex;
-    gap: 20px;
-    justify-content: center;
-    flex-wrap: wrap;
-    margin: 30px 0;
-    padding: 15px 0;
-}
-
-.back-btn, .next-btn, .measurement-btn {
-    padding: 18px 40px;
-    border: none;
-    border-radius: 12px;
-    font-size: 18px;
-    font-weight: bold;
-    cursor: pointer;
-    min-width: 200px;
-}
-
-.back-btn {
-    background: #95a5a6;
-    color: white;
-}
-.back-btn:hover { background: #7f8c8d; }
-
-.next-btn {
-    background: #27ae60;
-    color: white;
-}
-.next-btn:hover { background: #219653; }
-
-.measurement-btn {
-    background: #8e24aa;           /* Strong purple */
-    color: white;
-    font-size: 19px;
-    border: 3px solid #6a1b9a;
-}
-.measurement-btn:hover {
-    background: #6a1b9a;
-}
-
-/* Full-screen modal */
-.measurement-modal {
-    position: fixed;
-    top: 0; left: 0;
-    width: 100vw; height: 100vh;
-    background: rgba(0,0,0,0.92);
-    z-index: 99999;
-    display: flex;
-    flex-direction: column;
-    opacity: 0;
-    visibility: hidden;
-    transition: opacity 0.3s ease;
-}
-
-.measurement-modal.show {
-    opacity: 1;
-    visibility: visible;
-}
-
-/* Back Button at Top */
-.modal-header {
-    background: #8e24aa;
-    color: white;
-    padding: 18px 25px;
-    font-size: 20px;
-    font-weight: bold;
-    display: flex;
-    align-items: center;
-    gap: 15px;
-}
-
-.modal-back-btn {
-    background: none;
-    border: 2px solid white;
-    color: white;
-    padding: 8px 20px;
-    border-radius: 30px;
-    font-size: 16px;
-    font-weight: bold;
-    cursor: pointer;
-}
-.modal-back-btn:hover {
-    background: white;
-    color: #8e24aa;
-}
-
-.measurement-modal iframe {
-    flex: 1;
-    border: none;
-    background: white;
-}
-/* Same exact style as your current item selection popup */
-.measurement-popup-overlay {
-    position: fixed;
-    top: 0; left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(0, 0, 0, 0.8);
-    z-index: 9999;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    opacity: 0;
-    visibility: hidden;
-    transition: all 0.3s ease;
-}
-
-.measurement-popup-overlay.active {
-    opacity: 1;
-    visibility: visible;
-}
-
-.measurement-popup {
-    width: 95%;
-    height: 94%;
-    background: white;
-    border-radius: 16px;
-    overflow: hidden;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-    display: flex;
-    flex-direction: column;
-}
-
-/* EXACT SAME HEADER as your item popup */
-.measurement-popup-header {
-    background: linear-gradient(135deg, #8e24aa, #9c27b0);
-    color: white;
-    padding: 18px 25px;
-    font-size: 22px;
-    font-weight: bold;
-    display: flex;
-    align-items: center;
-    gap: 15px;
-}
-
-.measurement-popup-header button {
-    background: rgba(255,255,255,0.2);
-    border: 2px solid white;
-    color: white;
-    padding: 8px 20px;
-    border-radius: 30px;
-    font-weight: bold;
-    cursor: pointer;
-    transition: 0.3s;
-}
-
-.measurement-popup-header button:hover {
-    background: white;
-    color: #8e24aa;
-}
-
-.measurement-popup iframe {
-    flex: 1;
-    border: none;
-    width: 100%;
-}
 </style>
    
 </head>
@@ -325,7 +168,6 @@ if ($_POST['save_session'] ?? false) {
 
         <div class="actions">
             <button type="button" class="back-btn" onclick="checkAndShowConfirmModal()">Back to Schools</button>
-            <button type="button" class="measurement-btn" onclick="openMeasurementModal()">Take Measurement</button>
             <button type="button" class="next-btn" onclick="showSummary()">Pay Bill (0)</button>
         </div>
     </form>
@@ -623,21 +465,6 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 setInterval(save, 8000);
-function openMeasurementModal() {
-    const overlay = document.createElement('div');
-    overlay.className = 'measurement-popup-overlay';
-    overlay.innerHTML = `
-        <div class="measurement-popup">
-            <div class="measurement-popup-header">
-                <span style="flex:1;">Customer Measurement</span>
-                <button onclick="this.closest('.measurement-popup-overlay').remove()">Back</button>
-            </div>
-            <iframe src="measurement.php" allowfullscreen></iframe>
-        </div>
-    `;
-    document.body.appendChild(overlay);
-    setTimeout(() => overlay.classList.add('active'), 10);
-}
 </script>
 </body>
 </html>

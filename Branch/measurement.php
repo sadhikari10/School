@@ -133,6 +133,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_measurement'])) 
     <style>
         body { font-family: Arial, sans-serif; background: #f0f2f5; margin:0; padding:20px; color:#2c3e50; }
         .container { max-width: 1000px; margin: auto; background: white; border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); overflow: hidden; }
+        .header { background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 30px; text-align: center; }
         .header h1 { margin:0; font-size:28px; }
         .section { padding: 30px; }
         input, button { padding: 12px 20px; border-radius: 8px; border: none; font-size: 15px; cursor: pointer; margin: 5px; }
@@ -154,6 +155,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_measurement'])) 
 </head>
 <body>
 <div class="container">
+    <div class="header">
+        <h1>Customer Measurements</h1>
+    </div>
 
     <div class="section">
         <?php if ($success): ?>
@@ -238,6 +242,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_measurement'])) 
         </form>
         <!-- Add this button anywhere in the bottom section, e.g. near "Back to Dashboard" -->
 
+<div style="text-align:center; padding:20px;">
+    <a href="dashboard.php" class="back-btn">Back to Dashboard</a>
+    
+    <!-- NEW BUTTON: Go to Measurement List -->
+    <a href="measurement_list.php" class="back-btn" style="background:#9b59b6; margin-left:15px;">
+        View All Measurements
+    </a>
 </div>
     </div>
 
