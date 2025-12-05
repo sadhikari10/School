@@ -12,6 +12,7 @@ if (!isset($_SESSION['selected_school_id']) || !isset($_SESSION['selected_school
 
 require_once '../Common/connection.php';
 require_once 'UniformSelector.php';
+require_once 'MeasurementHelper.php';
 
 $outlet_id   = $_SESSION['outlet_id'];
 $school_id   = $_SESSION['selected_school_id'];
@@ -21,7 +22,25 @@ $selector = new UniformSelector($pdo, $school_id, $outlet_id);
 $itemsData = $selector->getItems();
 $items = $itemsData['items'];
 
-// Pre-calculate how many brands each item has
+$measHelper = new MeasurementHelper();
+
+// AJAX Handlers
+if ($_POST['action'] ?? '' === 'add_measurement') {
+    $name = trim($_POST['name'] ?? '');
+    $price = (float)($_POST['price'] ?? 0);
+    $measurements = json_decode($_POST['measurements'] ?? '{}', true);
+    $success = $measHelper->addItem($name, $measurements, $price);
+    echo json_encode(['success' => $success]);
+    exit();
+}
+
+if ($_POST['action'] ?? '' === 'remove_measurement') {
+    $measHelper->removeItem((int)$_POST['index']);
+    echo json_encode(['success' => true]);
+    exit();
+}
+
+// Pre-calculate brand count per item
 $brandCountPerItem = [];
 foreach ($items as $name => $sizes) {
     $brands = array_unique(array_column($sizes, 'brand'));
@@ -36,6 +55,7 @@ if (isset($_POST['clear_selections'])) {
     header("Location: dashboard.php");
     exit();
 }
+
 if ($_POST['save_session'] ?? false) {
     $_SESSION['selected_sizes'] = $_POST['selected_sizes'] ?? [];
     exit(json_encode(['status' => 'saved']));
@@ -50,7 +70,7 @@ if ($_POST['save_session'] ?? false) {
     <title>Select Sizes - <?php echo htmlspecialchars($school_name); ?></title>
     <link rel="stylesheet" href="select_items.css">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&display=swap">
-<style>
+    <style>
     .size-box {
         background: #f8f9fa;
         border: 2px solid #e1e8ed;
@@ -73,7 +93,7 @@ if ($_POST['save_session'] ?? false) {
         background: #f0fff4 !important;
     }
     .size-box.selected-in-modal::after {
-        content: '✓';        /* ← This is the real checkmark */
+        content: '✓';        /* This is the real checkmark */
         position: absolute;
         top: -10px;
         right: -10px;
@@ -133,7 +153,6 @@ if ($_POST['save_session'] ?? false) {
         box-shadow: 0 12px 30px rgba(102, 126, 234, 0.25);
     }
 </style>
-   
 </head>
 <body>
 
@@ -146,8 +165,6 @@ if ($_POST['save_session'] ?? false) {
     <form method="POST" action="bill.php" id="itemsForm">
         <input type="hidden" name="school_id" value="<?php echo $school_id; ?>">
         <input type="hidden" name="school_name" value="<?php echo htmlspecialchars($school_name); ?>">
-
-        <!-- Dynamic hidden inputs for order -->
         <div id="dynamicInputs"></div>
 
         <div class="categories-grid">
@@ -168,7 +185,8 @@ if ($_POST['save_session'] ?? false) {
 
         <div class="actions">
             <button type="button" class="back-btn" onclick="checkAndShowConfirmModal()">Back to Schools</button>
-            <button type="button" class="next-btn" onclick="showSummary()">Pay Bill (0)</button>
+            <button type="button" class="next-btn" style="background:#e67e22;" onclick="openMeasurementModal()">Take Measurement</button>
+            <button type="button" class="next-btn" onclick="showSummary()">Proceed to Payment (0)</button>
         </div>
     </form>
 
@@ -211,7 +229,7 @@ if ($_POST['save_session'] ?? false) {
     </div>
 
     <!-- Confirm Back Modal -->
-    <div class="confirm-modal" id="confirmModal">
+    <div class="modal" id="confirmModal">
         <div class="confirm-content">
             <div class="confirm-header">
                 <span class="confirm-icon">Warning</span>
@@ -229,18 +247,23 @@ if ($_POST['save_session'] ?? false) {
     </div>
 </div>
 
+<!-- Hidden form to clear session -->
 <form method="POST" id="clearForm" style="display:none;">
     <input type="hidden" name="clear_selections" value="1">
 </form>
 
+<!-- Measurement Modal -->
+<?php $measHelper->renderModal(); ?>
+
 <script>
+// Global data
 const allItems = <?php echo json_encode($items); ?>;
 const brandCountPerItem = <?php echo json_encode($brandCountPerItem); ?>;
 let selectedSizes = <?php echo json_encode($selectedSizes); ?>;
 let currentKey = '';
 let currentItemName = '';
 
-// Parse "size|brand:qty" format
+// Helpers
 function parse(str) {
     const map = {};
     if (str) str.split(',').forEach(p => {
@@ -250,90 +273,91 @@ function parse(str) {
     return map;
 }
 function stringify(map) {
-    return Object.entries(map)
-        .filter(([_, q]) => q > 0)
-        .map(([c, q]) => `${c}:${q}`)
-        .join(',');
+    return Object.entries(map).filter(([_, q]) => q > 0).map(([c, q]) => `${c}:${q}`).join(',');
 }
 
-function showSizeModal(key, name, emoji) {
-    currentKey = key;
-    currentItemName = name;
-    document.getElementById('modalIcon').textContent = emoji;
-    document.getElementById('modalTitle').textContent = name;
-    const grid = document.getElementById('sizesGrid');
-    grid.innerHTML = '';
-
-    let sizes = [...(allItems[name] || [])];
-    sizes.sort((a, b) => a.brand_id - b.brand_id || 
-        (a.size.includes(',') ? -1 : 1) || 
-        parseFloat(a.size.replace(/[^0-9.]/g, '')) - parseFloat(b.size.replace(/[^0-9.]/g, ''))
-    );
-
-    const selected = parse(selectedSizes[key] || '');
-    const showBrandHeader = brandCountPerItem[name] > 1;
-    let lastBrand = null;
-
-    sizes.forEach(s => {
-        if (showBrandHeader && s.brand !== lastBrand) {
-            lastBrand = s.brand;
-            const h = document.createElement('div');
-            h.className = 'brand-header';
-            h.textContent = s.brand + ' Brand';
-            grid.appendChild(h);
-        }
-
-        const code = `${s.size}|${s.brand}`;
-        const qty = selected[code] || 0;
-
-        const box = document.createElement('div');
-        box.className = 'size-box';
-        if (qty > 0) {
-            box.classList.add('selected-in-modal');  // Only in modal: green checkmark
-            box.classList.add('has-quantity');       // Keep green border outside too
-        }
-
-        box.onclick = () => addOne(key, code);
-
-        box.innerHTML = `
-            <div class="size-label">${s.size}</div>
-            <div class="size-price">Rs. ${Number(s.price).toLocaleString()}</div>
-            ${qty > 0 ? `<div class="qty-badge">${qty}</div>` : ''}
-        `;
-        grid.appendChild(box);
-    });
-
-    document.getElementById('sizeModal').style.display = 'flex';
+// Modal Controls
+function openMeasurementModal() {
+    document.getElementById('measurementModal').style.display = 'flex';
+}
+function closeMeasurementModal() {
+    document.getElementById('measurementModal').style.display = 'none';
+}
+function closeSizeModal() {
+    document.getElementById('sizeModal').style.display = 'none';
     updateIndicators();
     updateHiddenOrderFields();
 }
-
-function addOne(key, code) {
-    const map = parse(selectedSizes[key] || '');
-    map[code] = (map[code] || 0) + 1;
-    selectedSizes[key] = stringify(map);
-    if (!selectedSizes[key]) delete selectedSizes[key];
-    showSizeModal(key, currentItemName, document.getElementById('modalIcon').textContent);
-    save();
+function closeSummary() {
+    document.getElementById('selectedItemsModal').style.display = 'none';
+}
+function closeConfirm() {
+    document.getElementById('confirmModal').style.display = 'none';
 }
 
-function clearCurrentItem() {
-    delete selectedSizes[currentKey];
-    showSizeModal(currentKey, currentItemName, document.getElementById('modalIcon').textContent);
-    save();
+function checkAndShowConfirmModal() {
+    if (Object.keys(selectedSizes).length > 0) {
+        document.getElementById('confirmModal').style.display = 'flex';
+    } else {
+        location.href = 'dashboard.php';
+    }
+}
+function confirmClear() {
+    document.getElementById('clearForm').submit();
+}
+
+function showSummary() {
+    const list = document.getElementById('summaryList');
+    list.innerHTML = '';
+    let totalAmount = 0;
+    let totalQty = 0;
+
+    Object.entries(selectedSizes).forEach(([key, str]) => {
+        if (!str) return;
+        const name = Object.keys(allItems).find(n => n.replace(/[^a-zA-Z0-9]/g, '_') === key);
+        if (!name) return;
+        const map = parse(str);
+        Object.entries(map).forEach(([code, qty]) => {
+            totalQty += qty;
+            const [size, brand] = code.split('|');
+            const item = allItems[name].find(i => i.size === size && i.brand === brand);
+            if (!item) return;
+            const amount = item.price * qty;
+            totalAmount += amount;
+            const showBrand = brandCountPerItem[name] > 1;
+            const div = document.createElement('div');
+            div.className = 'selected-item';
+            div.innerHTML = `<div class="item-details"><div class="item-name">${name}</div><div class="item-size">${size} ${showBrand ? '('+brand+')' : ''} × ${qty}</div></div><div class="item-price">Rs. ${amount.toLocaleString()}</div>`;
+            list.appendChild(div);
+        });
+    });
+
+    if (totalAmount === 0) {
+        list.innerHTML = '<div class="no-items">No items selected yet</div>';
+        document.getElementById('totalSummary').style.display = 'none';
+    } else {
+        document.getElementById('totalSummary').style.display = 'block';
+        document.getElementById('grandTotal').textContent = totalAmount.toLocaleString();
+    }
+
+    document.querySelectorAll('.next-btn').forEach(btn => {
+        if (btn.onclick?.toString().includes('showSummary')) {
+            btn.textContent = `Proceed to Payment (${totalQty})`;
+        }
+    });
+
+    document.getElementById('selectedItemsModal').style.display = 'flex';
 }
 
 function updateIndicators() {
-    let totalItems = 0;
+    let total = 0;
     document.querySelectorAll('.category-card').forEach(card => {
-        const match = card.getAttribute('onclick').match(/'([^']+)'/);
+        const match = card.getAttribute('onclick')?.match(/'([^']+)'/);
         const key = match ? match[1] : null;
         const indicator = card.querySelector('.selected-indicator');
-
         if (key && selectedSizes[key]) {
-            const qty = Object.values(parse(selectedSizes[key])).reduce((a, b) => a + b, 0);
-            totalItems += qty;
-
+            const qty = Object.values(parse(selectedSizes[key])).reduce((a,b) => a+b, 0);
+            total += qty;
             if (indicator) {
                 indicator.textContent = qty;
                 indicator.style.display = 'flex';
@@ -349,122 +373,144 @@ function updateIndicators() {
             card.classList.remove('has-selection');
         }
     });
-
-    document.querySelector('.next-btn').textContent = `Pay Bill (${totalItems})`;
+    document.querySelectorAll('.next-btn').forEach(btn => {
+        if (btn.textContent.includes('Proceed') || btn.textContent.includes('Payment')) {
+            btn.textContent = `Proceed to Payment (${total})`;
+        }
+    });
 }
 
 function updateHiddenOrderFields() {
     const container = document.getElementById('dynamicInputs');
     container.innerHTML = '';
-
     Object.entries(selectedSizes).forEach(([key, str]) => {
         if (!str) return;
-
-        const itemName = Object.keys(allItems).find(n => 
-            n.replace(/[^a-zA-Z0-9]/g, '_') === key
-        );
+        const itemName = Object.keys(allItems).find(n => n.replace(/[^a-zA-Z0-9]/g, '_') === key);
         if (!itemName) return;
-
         const map = parse(str);
         Object.entries(map).forEach(([code, qty]) => {
             const [size, brand] = code.split('|');
             const item = allItems[itemName].find(i => i.size === size && i.brand === brand);
             if (!item) return;
-
-            const index = btoa(Math.random()).substring(0, 12);
-
-            const fields = {
-                item_name: itemName,
-                size: size,
-                brand: brand,
-                price: item.price,
-                quantity: qty
-            };
-
-            Object.entries(fields).forEach(([field, value]) => {
+            const index = btoa(Math.random()).substring(0,12);
+            ['item_name', 'size', 'brand', 'price', 'quantity'].forEach(f => {
                 const input = document.createElement('input');
                 input.type = 'hidden';
-                input.name = `order[${index}][${field}]`;
-                input.value = value;
+                input.name = `order[${index}][${f}]`;
+                input.value = f === 'item_name' ? itemName : f === 'size' ? size : f === 'brand' ? brand : f === 'price' ? item.price : qty;
                 container.appendChild(input);
             });
         });
     });
 }
 
-function showSummary() {
-    const list = document.getElementById('summaryList');
-    list.innerHTML = '';
-    let totalAmount = 0;
-
-    Object.entries(selectedSizes).forEach(([key, str]) => {
-        if (!str) return;
-        const name = Object.keys(allItems).find(n => n.replace(/[^a-zA-Z0-9]/g, '_') === key);
-        const map = parse(str);
-
-        Object.entries(map).forEach(([code, qty]) => {
-            const [size, brand] = code.split('|');
-            const item = allItems[name].find(i => i.size === size && i.brand === brand);
-            if (!item) return;
-
-            const amount = item.price * qty;
-            totalAmount += amount;
-
-            const showBrand = brandCountPerItem[name] > 1;
-
-            const div = document.createElement('div');
-            div.className = 'selected-item';
-            div.innerHTML = `
-                <div class="item-details">
-                    <div class="item-name">${name}</div>
-                    <div class="item-size">${size} ${showBrand ? `(${brand})` : ''} × ${qty}</div>
-                </div>
-                <div class="item-price">Rs. ${amount.toLocaleString()}</div>
-            `;
-            list.appendChild(div);
-        });
-    });
-
-    if (totalAmount === 0) {
-        list.innerHTML = '<div class="no-items">No items selected yet</div>';
-    } else {
-        document.getElementById('totalSummary').style.display = 'block';
-        document.getElementById('grandTotal').textContent = totalAmount.toLocaleString();
-    }
-
-    document.getElementById('selectedItemsModal').style.display = 'flex';
-}
-
 function save() {
     const fd = new FormData();
     fd.append('save_session', '1');
-    Object.entries(selectedSizes).forEach(([k, v]) => fd.append(`selected_sizes[${k}]`, v));
+    Object.entries(selectedSizes).forEach(([k,v]) => fd.append(`selected_sizes[${k}]`, v));
     fetch('', { method: 'POST', body: fd });
 }
 
-function closeSizeModal() { 
-    document.getElementById('sizeModal').style.display = 'none'; 
-    updateIndicators(); 
-    updateHiddenOrderFields(); 
+function showSizeModal(key, name, emoji) {
+    currentKey = key;
+    currentItemName = name;
+    document.getElementById('modalIcon').textContent = emoji;
+    document.getElementById('modalTitle').textContent = name;
+    const grid = document.getElementById('sizesGrid');
+    grid.innerHTML = '';
+    let sizes = [...(allItems[name] || [])];
+    sizes.sort((a,b) => a.brand_id - b.brand_id || (a.size.includes(',') ? -1 : 1) || parseFloat(a.size.replace(/[^0-9.]/g,'')) - parseFloat(b.size.replace(/[^0-9.]/g,'')));
+    const selected = parse(selectedSizes[key] || '');
+    const showHeader = brandCountPerItem[name] > 1;
+    let lastBrand = null;
+    sizes.forEach(s => {
+        if (showHeader && s.brand !== lastBrand) {
+            lastBrand = s.brand;
+            const h = document.createElement('div');
+            h.className = 'brand-header';
+            h.textContent = s.brand + ' Brand';
+            grid.appendChild(h);
+        }
+        const code = `${s.size}|${s.brand}`;
+        const qty = selected[code] || 0;
+        const box = document.createElement('div');
+        box.className = 'size-box' + (qty > 0 ? ' selected-in-modal has-quantity' : '');
+        box.onclick = () => {
+            const map = parse(selectedSizes[key] || '');
+            map[code] = (map[code] || 0) + 1;
+            selectedSizes[key] = stringify(map);
+            if (!selectedSizes[key]) delete selectedSizes[key];
+            showSizeModal(key, name, emoji);
+            save();
+        };
+        box.innerHTML = `<div class="size-label">${s.size}</div><div class="size-price">Rs. ${Number(s.price).toLocaleString()}</div>${qty > 0 ? `<div class="qty-badge">${qty}</div>` : ''}`;
+        grid.appendChild(box);
+    });
+    document.getElementById('sizeModal').style.display = 'flex';
 }
-function closeSummary() { document.getElementById('selectedItemsModal').style.display = 'none'; }
-function closeConfirm() { document.getElementById('confirmModal').style.display = 'none'; }
-function checkAndShowConfirmModal() {
-    if (Object.keys(selectedSizes).length > 0) {
-        document.getElementById('confirmModal').style.display = 'flex';
-    } else {
-        location.href = 'dashboard.php';
+
+function clearCurrentItem() {
+    delete selectedSizes[currentKey];
+    showSizeModal(currentKey, currentItemName, document.getElementById('modalIcon').textContent);
+    save();
+}
+
+// Measurement Functions
+function addMeasField() {
+    const container = document.getElementById('measFields');
+    const row = document.createElement('div');
+    row.className = 'meas-row';
+    row.style.cssText = 'display:flex;gap:10px;margin-bottom:10px;';
+    row.innerHTML = `<input type="text" placeholder="Field (e.g. Collar)" class="meas-label" style="flex:1;padding:12px;border-radius:8px;border:1px solid #ccc;">
+                     <input type="text" placeholder="Value (e.g. 41)" class="meas-value" style="width:100px;padding:12px;border-radius:8px;border:1px solid #ccc;">
+                     <button type="button" onclick="this.parentElement.remove()" style="background:#e74c3c;color:white;border:none;padding:0 12px;border-radius:6px;">×</button>`;
+    container.appendChild(row);
+}
+
+function saveMeasurementItem() {
+    const name = document.getElementById('measItemName').value.trim();
+    const price = parseFloat(document.getElementById('measPrice').value) || 0;
+    const rows = document.querySelectorAll('#measFields .meas-row');
+    const measurements = {};
+    for (const row of rows) {
+        const label = row.querySelector('.meas-label').value.trim();
+        const value = row.querySelector('.meas-value').value.trim();
+        if (label && value) measurements[label] = value;
+    }
+    if (!name || price <= 0 || Object.keys(measurements).length === 0) {
+        alert('Please fill all fields: name, price, and at least one measurement.');
+        return;
+    }
+    fetch('', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ action: 'add_measurement', name, price, measurements: JSON.stringify(measurements) })
+    }).then(() => location.reload());
+}
+
+function removeMeasItem(index) {
+    if (confirm('Remove this item?')) {
+        fetch('', {
+            method: 'POST',
+            body: new URLSearchParams({ action: 'remove_measurement', index })
+        }).then(() => location.reload());
     }
 }
-function confirmClear() { document.getElementById('clearForm').submit(); }
+
+// Close modal when clicking outside
+document.addEventListener('click', e => {
+    ['measurementModal', 'sizeModal', 'selectedItemsModal', 'confirmModal'].forEach(id => {
+        const modal = document.getElementById(id);
+        if (e.target === modal) modal.style.display = 'none';
+    });
+});
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     updateIndicators();
     updateHiddenOrderFields();
+    setInterval(save, 8000);
 });
-
-setInterval(save, 8000);
 </script>
 </body>
 </html>

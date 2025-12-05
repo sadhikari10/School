@@ -11,6 +11,13 @@ if (!isset($_SESSION['user_id'])) {
     exit;
 }
 
+// Add measurement items
+require_once 'MeasurementHelper.php';
+$measHelper = new MeasurementHelper();
+foreach ($measHelper->getForOrder() as $m) {
+    $order_items[] = $m;
+}
+
 $user_id = $_SESSION['user_id'];
 $username = $_SESSION['username'] ?? 'User';
 $outlet_id = $_SESSION['outlet_id'] ?? 0;
