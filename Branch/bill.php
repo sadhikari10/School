@@ -202,7 +202,7 @@ while ($row = $stmt->fetch()) {
     if ($row['type'] === 'paid') $is_paid_saved = true;
 }
 // ————————————————————————————————————————
-// AJAX: Save as ADVANCE → Save measurements + increment counter
+// AJAX: Save as ADVANCE → Save measurements + school_id + outlet_id
 // ————————————————————————————————————————
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_save_advance'])) {
     if ($is_paid_saved) {
@@ -220,88 +220,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_save_advance']))
         exit;
     }
 
-    // ←←← INCREMENT BILL NUMBER SAFELY
+    // Increment bill number
     $final_bill_number = incrementBillCounter($pdo, $outlet_id, $fiscal_year);
     $bill_number = $final_bill_number;
     $_SESSION['current_bill_number'] = $bill_number;
 
-    // ——————— SAVE CUSTOM MEASUREMENTS (if any) ———————
-    require_once 'MeasurementHelper.php';
-    $measHelper = new MeasurementHelper();
-    $customItems = $measHelper->getItems(); // raw items with measurements
-
-    if (!empty($customItems)) {
-        $measurements = [];
-        $prices = [];
-
-        foreach ($customItems as $item) {
-            $clean_name = preg_replace('/\s*\(Custom Made\)$/i', '', $item['name']);
-            $measurements[$clean_name] = $item['measurements'];
-            $prices[$clean_name] = $item['price'] * $item['quantity']; // total per item
-        }
-
-        $measurements_json = json_encode($measurements, JSON_UNESCAPED_UNICODE);
-        $prices_json       = json_encode($prices, JSON_UNESCAPED_UNICODE);
-
-        // Insert or update (in case bill was re-saved)
-        $stmt = $pdo->prepare("INSERT INTO customer_measurements 
-            (bill_number, fiscal_year, customer_name, measurements, prices, created_at, created_by)
-            VALUES (?, ?, ?, ?, ?, NOW(), ?)
-            ON DUPLICATE KEY UPDATE
-            measurements = VALUES(measurements),
-            prices = VALUES(prices),
-            customer_name = VALUES(customer_name),
-            created_at = NOW(),
-            created_by = VALUES(created_by)");
-
-        $stmt->execute([
-            $bill_number,
-            $fiscal_year,
-            $customer_name,
-            $measurements_json,
-            $prices_json,
-            $printed_by
-        ]);
-    }
-
-    // ——————— SAVE ADVANCE PAYMENT ———————
-    $pdo->prepare("INSERT INTO advance_payment 
-        (bill_number, branch, outlet_id, fiscal_year, school_name, customer_name, advance_amount, total, payment_method, printed_by, bs_datetime, items_json, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unpaid')")
-        ->execute([
-            $bill_number, $location, $outlet_id, $fiscal_year, $school_name,
-            $customer_name, $advance_amount, $subtotal, $payment_method,
-            $printed_by, $print_time_db, $items_json
-        ]);
-
-    echo json_encode(['success' => true, 'bill_number' => $bill_number]);
-    exit;
-}
-
-// ————————————————————————————————————————
-// AJAX: Mark as PAID → Save measurements + increment counter
-// ————————————————————————————————————————
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
-    if ($is_advance_saved) {
-        echo json_encode(['success' => false, 'error' => 'Bill already saved as ADVANCE!']);
-        exit;
-    }
-
-    $customer_name  = trim($_POST['customer_name'] ?? '');
-    $payment_method = $_POST['payment_method'] === 'online' ? 'online' : 'cash';
-    $school_name    = $_SESSION['temp_school_name'] ?? '';
-
-    if (empty($detailed_items)) {
-        echo json_encode(['success' => false, 'error' => 'No items']);
-        exit;
-    }
-
-    // ←←← INCREMENT BILL NUMBER
-    $final_bill_number = incrementBillCounter($pdo, $outlet_id, $fiscal_year);
-    $bill_number = $final_bill_number;
-    $_SESSION['current_bill_number'] = $bill_number;
-
-    // ——————— SAVE CUSTOM MEASUREMENTS (same logic) ———————
+    // ——————— SAVE CUSTOM MEASUREMENTS (with school_id & outlet_id) ———————
     require_once 'MeasurementHelper.php';
     $measHelper = new MeasurementHelper();
     $customItems = $measHelper->getItems();
@@ -319,19 +243,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
         $measurements_json = json_encode($measurements, JSON_UNESCAPED_UNICODE);
         $prices_json       = json_encode($prices, JSON_UNESCAPED_UNICODE);
 
+        $school_id = $_SESSION['selected_school_id'] ?? null;
+        $outlet_id_current = $_SESSION['outlet_id'] ?? null; // current outlet
+
         $stmt = $pdo->prepare("INSERT INTO customer_measurements 
-            (bill_number, fiscal_year, customer_name, measurements, prices, created_at, created_by)
-            VALUES (?, ?, ?, ?, ?, NOW(), ?)
+            (bill_number, fiscal_year, school_id, outlet_id, customer_name, measurements, prices, created_at, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)
             ON DUPLICATE KEY UPDATE
             measurements = VALUES(measurements),
             prices = VALUES(prices),
             customer_name = VALUES(customer_name),
+            school_id = VALUES(school_id),
+            outlet_id = VALUES(outlet_id),
             created_at = NOW(),
             created_by = VALUES(created_by)");
 
         $stmt->execute([
             $bill_number,
             $fiscal_year,
+            $school_id,
+            $outlet_id_current,
             $customer_name,
             $measurements_json,
             $prices_json,
@@ -339,7 +270,89 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
         ]);
     }
 
-    // ——————— SAVE FULL SALE ———————
+    // Save advance payment (unchanged)
+    $pdo->prepare("INSERT INTO advance_payment 
+        (bill_number, branch, outlet_id, fiscal_year, school_name, customer_name, advance_amount, total, payment_method, printed_by, bs_datetime, items_json, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unpaid')")
+        ->execute([
+            $bill_number, $location, $outlet_id, $fiscal_year, $school_name,
+            $customer_name, $advance_amount, $subtotal, $payment_method,
+            $printed_by, $print_time_db, $items_json
+        ]);
+
+    echo json_encode(['success' => true, 'bill_number' => $bill_number]);
+    exit;
+}
+
+// ————————————————————————————————————————
+// AJAX: Mark as PAID → Save measurements + school_id + outlet_id
+// ————————————————————————————————————————
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
+    if ($is_advance_saved) {
+        echo json_encode(['success' => false, 'error' => 'Bill already saved as ADVANCE!']);
+        exit;
+    }
+
+    $customer_name  = trim($_POST['customer_name'] ?? '');
+    $payment_method = $_POST['payment_method'] === 'online' ? 'online' : 'cash';
+    $school_name    = $_SESSION['temp_school_name'] ?? '';
+
+    if (empty($detailed_items)) {
+        echo json_encode(['success' => false, 'error' => 'No items']);
+        exit;
+    }
+
+    // Increment bill number
+    $final_bill_number = incrementBillCounter($pdo, $outlet_id, $fiscal_year);
+    $bill_number = $final_bill_number;
+    $_SESSION['current_bill_number'] = $bill_number;
+
+    // ——————— SAVE CUSTOM MEASUREMENTS (with school_id & outlet_id) ———————
+    require_once 'MeasurementHelper.php';
+    $measHelper = new MeasurementHelper();
+    $customItems = $measHelper->getItems();
+
+    if (!empty($customItems)) {
+        $measurements = [];
+        $prices = [];
+
+        foreach ($customItems as $item) {
+            $clean_name = preg_replace('/\s*\(Custom Made\)$/i', '', $item['name']);
+            $measurements[$clean_name] = $item['measurements'];
+            $prices[$clean_name] = $item['price'] * $item['quantity'];
+        }
+
+        $measurements_json = json_encode($measurements, JSON_UNESCAPED_UNICODE);
+        $prices_json       = json_encode($prices, JSON_UNESCAPED_UNICODE);
+
+        $school_id = $_SESSION['selected_school_id'] ?? null;
+        $outlet_id_current = $_SESSION['outlet_id'] ?? null;
+
+        $stmt = $pdo->prepare("INSERT INTO customer_measurements 
+            (bill_number, fiscal_year, school_id, outlet_id, customer_name, measurements, prices, created_at, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)
+            ON DUPLICATE KEY UPDATE
+            measurements = VALUES(measurements),
+            prices = VALUES(prices),
+            customer_name = VALUES(customer_name),
+            school_id = VALUES(school_id),
+            outlet_id = VALUES(outlet_id),
+            created_at = NOW(),
+            created_by = VALUES(created_by)");
+
+        $stmt->execute([
+            $bill_number,
+            $fiscal_year,
+            $school_id,
+            $outlet_id_current,
+            $customer_name,
+            $measurements_json,
+            $prices_json,
+            $printed_by
+        ]);
+    }
+
+    // Save full sale
     $pdo->prepare("INSERT INTO sales 
         (bill_number, branch, outlet_id, fiscal_year, school_name, customer_name, total, payment_method, printed_by, printed_at, bs_datetime, items_json)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)")
@@ -349,10 +362,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
             $print_time_db, $items_json
         ]);
 
-    // Clean up session
+    // Full cleanup
     unset($_SESSION['temp_bill_items'], $_SESSION['temp_subtotal'], $_SESSION['temp_customer_name'], 
           $_SESSION['temp_items_json'], $_SESSION['temp_school_name'], $_SESSION['current_bill_number']);
-    $measHelper->clearAll(); // ← Clear measurements after final save
+    $measHelper->clearAll();
 
     echo json_encode(['success' => true, 'bill_number' => $bill_number]);
     exit;
