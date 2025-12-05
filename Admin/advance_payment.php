@@ -14,7 +14,7 @@ $outlet_name = $_SESSION['selected_outlet_name'] ?? 'Unknown Outlet';
 
 // Initialize filters
 $params = [$outlet_id];
-$filters = [];
+$filters = ["status = 'unpaid'"]; // only unpaid
 
 // === FILTERS ===
 if (!empty($_GET['fiscal_year'])) {
@@ -105,7 +105,7 @@ $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
 </head>
 <body>
 <div class="container">
-    <h1>Advance Payments - <?php echo htmlspecialchars($outlet_name); ?></h1>
+    <h1>Advance Payments (Unpaid) - <?php echo htmlspecialchars($outlet_name); ?></h1>
 
     <form method="GET" class="filter-form">
         <input type="text" name="fiscal_year" placeholder="Fiscal Year" value="<?php echo htmlspecialchars($_GET['fiscal_year'] ?? ''); ?>">
@@ -120,7 +120,7 @@ $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
     </form>
 
     <?php if(empty($payments)): ?>
-        <p style="text-align:center;color:#7f8c8d;font-size:1rem;">No records found.</p>
+        <p style="text-align:center;color:#7f8c8d;font-size:1rem;">No unpaid records found.</p>
     <?php else: ?>
         <table>
             <thead>
