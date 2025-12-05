@@ -11,12 +11,6 @@ if (!isset($_SESSION['user_id'])) {
     exit;
 }
 
-// Add measurement items
-require_once 'MeasurementHelper.php';
-$measHelper = new MeasurementHelper();
-foreach ($measHelper->getForOrder() as $m) {
-    $order_items[] = $m;
-}
 
 $user_id = $_SESSION['user_id'];
 $username = $_SESSION['username'] ?? 'User';
@@ -99,41 +93,98 @@ $subtotal = 0.0;
 $customer_name = '';
 $items_json = '[]';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_POST['ajax_mark_paid']) && !isset($_POST['ajax_save_advance']) && !empty($_POST['order'])) {
-    $customer_name = trim($_POST['customer_name'] ?? '');
-    $order_items = $_POST['order'];
-    $items_processed = [];
+// ———————————————————————————————————————
+// 1. LOAD REGULAR ITEMS FROM POST (if coming from select_items.php)
+// ———————————————————————————————————————
+$regular_items = [];  // Will hold processed regular items
+$custom_items  = [];  // Will hold processed measurement items
 
-    foreach ($order_items as $item) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' 
+    && !isset($_POST['ajax_mark_paid']) 
+    && !isset($_POST['ajax_save_advance']) 
+    && !empty($_POST['order'])) {
+
+    $customer_name = trim($_POST['customer_name'] ?? '');
+    $_SESSION['temp_school_name'] = $_POST['school_name'] ?? $_SESSION['selected_school_name'] ?? '';
+
+    foreach ($_POST['order'] as $item) {
         $item_name = $item['item_name'] ?? 'Unknown';
-        $size = $item['size'] ?? '';
-        $brand = $item['brand'] ?? '';
-        $price = (float)($item['price'] ?? 0);
-        $qty = (int)($item['quantity'] ?? 1);
+        $size      = $item['size'] ?? '';
+        $brand     = $item['brand'] ?? '';
+        $price     = (float)($item['price'] ?? 0);
+        $qty       = (int)($item['quantity'] ?? 1);
         if ($price <= 0) $price = 1500;
 
-        $amount = $price * $qty;
+        $amount       = $price * $qty;
         $display_name = $item_name . ($brand && strtolower($brand) !== 'nepali' ? " - $brand" : '');
-        $display_size = empty($size) || stripos($size, 'not available') !== false ? 'N/A' : $size;
+        $display_size = (empty($size) || stripos($size, 'not available') !== false) ? 'N/A' : $size;
 
-        $detailed_items[] = ['name' => $display_name, 'size' => $display_size, 'qty' => $qty, 'price' => $price, 'amount' => $amount];
-        $subtotal += $amount;
-        $items_processed[] = ['name' => $display_name, 'size' => $display_size, 'price' => $price, 'quantity' => $qty];
+        $regular_items[] = [
+            'name'     => $display_name,
+            'size'     => $display_size,
+            'qty'      => $qty,
+            'price'    => $price,
+            'amount'   => $amount
+        ];
     }
 
-    $items_json = json_encode($items_processed, JSON_UNESCAPED_UNICODE);
-
-    $_SESSION['temp_bill_items'] = $detailed_items;
-    $_SESSION['temp_subtotal'] = $subtotal;
+    // Save to session immediately
     $_SESSION['temp_customer_name'] = $customer_name;
-    $_SESSION['temp_items_json'] = $items_json;
-    $_SESSION['temp_school_name'] = $_POST['school_name'] ?? $_SESSION['selected_school_name'] ?? '';
+    $_SESSION['temp_regular_items'] = $regular_items;
+
 } else {
-    $detailed_items = $_SESSION['temp_bill_items'] ?? [];
-    $subtotal       = $_SESSION['temp_subtotal'] ?? 0.0;
-    $customer_name  = $_SESSION['temp_customer_name'] ?? '';
-    $items_json     = $_SESSION['temp_items_json'] ?? '[]';
+    // Restore from session when page reloads or coming back
+    $customer_name   = $_SESSION['temp_customer_name'] ?? '';
+    $regular_items   = $_SESSION['temp_regular_items'] ?? [];
 }
+
+// ———————————————————————————————————————
+// 2. ALWAYS ADD CUSTOM MEASUREMENT ITEMS (from MeasurementHelper)
+// ———————————————————————————————————————
+require_once 'MeasurementHelper.php';
+$measHelper = new MeasurementHelper();
+
+foreach ($measHelper->getForOrder() as $m) {
+    $price   = (float)($m['price'] ?? 0);
+    $qty     = (int)($m['quantity'] ?? 1);
+    if ($price <= 0) $price = 1500;
+
+    $amount       = $price * $qty;
+    $clean_name = preg_replace('/\s*\(Custom Made\)$/i', '', $m['item_name']);                  // e.g. "Full Suit (Custom Made)"
+    $display_size = 'Custom';              // shows measurements or "Custom"
+
+    $custom_items[] = [
+        'name'   => trim($clean_name),
+        'size'   => $display_size,
+        'qty'    => $qty,
+        'price'  => $price,
+        'amount' => $amount
+    ];
+}
+
+// ———————————————————————————————————————
+// 3. FINAL: COMBINE BOTH + CALCULATE SUBTOTAL + JSON
+// ———————————————————————————————————————
+$detailed_items = array_merge($regular_items, $custom_items);
+$subtotal       = 0.0;
+$items_processed = [];
+
+foreach ($detailed_items as $item) {
+    $subtotal += $item['amount'];
+    $items_processed[] = [
+        'name'     => $item['name'],
+        'size'     => $item['size'],
+        'price'    => $item['price'],
+        'quantity' => $item['qty']
+    ];
+}
+
+$items_json = json_encode($items_processed, JSON_UNESCAPED_UNICODE);
+
+// Update session with final values (important for reloads)
+$_SESSION['temp_bill_items'] = $detailed_items;
+$_SESSION['temp_subtotal']   = $subtotal;
+$_SESSION['temp_items_json'] = $items_json;
 
 $printed_date_display = nepali_date_time();
 
