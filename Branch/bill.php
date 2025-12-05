@@ -378,19 +378,48 @@ if (isset($_POST['start_new_bill'])) {
     .custom-alert { display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:white; padding:30px; border-radius:10px; text-align:center; z-index:9999; box-shadow:0 5px 20px rgba(0,0,0,0.3); }
     .custom-alert button { margin-top:15px; padding:10px 25px; background:#27ae60; color:white; border:none; border-radius:5px; cursor:pointer; }
 </style>
-
 <script>
 const totalAmount = <?php echo $subtotal; ?>;
+
+// Function to disable all bill actions (used on save + page load if already saved)
+function disableBillActions() {
+    const saveBtn = document.getElementById('saveBillBtn');
+    const addMoreLink = document.querySelector('a[href="select_items.php"]');
+    const actionSelect = document.getElementById('billAction');
+
+    if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saved';
+        saveBtn.style.background = '#95a5a6';
+        saveBtn.style.cursor = 'not-allowed';
+    }
+
+    if (addMoreLink) {
+        addMoreLink.style.pointerEvents = 'none';
+        addMoreLink.style.opacity = '0.5';
+        addMoreLink.style.color = '#999';
+        addMoreLink.style.textDecoration = 'none';
+        addMoreLink.title = 'Cannot add items after bill is saved';
+        addMoreLink.innerHTML = 'Add More Items (saved)';
+    }
+
+    if (actionSelect) {
+        actionSelect.disabled = true;
+    }
+}
 
 function updateDisplay() {
     const advance = parseFloat(document.getElementById('advanceInput').value) || 0;
     document.getElementById('advanceDisplay').textContent = 'Rs. ' + advance.toFixed(2);
     document.getElementById('remainingDisplay').textContent = 'Rs. ' + (totalAmount - advance).toFixed(2);
-    document.getElementById('customerDisplay').textContent = document.getElementById('customerName').value || 'Customer';
+    document.getElementById('customerDisplay').textContent = document.getElementById('customerName').value.trim() || 'Customer';
 }
-document.getElementById('advanceInput').addEventListener('input', updateDisplay);
-document.getElementById('customerName').addEventListener('input', updateDisplay);
 
+// Live update when typing
+document.getElementById('advanceInput')?.addEventListener('input', updateDisplay);
+document.getElementById('customerName')?.addEventListener('input', updateDisplay);
+
+// Save Bill Button Logic
 document.getElementById('saveBillBtn')?.addEventListener('click', function() {
     if (this.disabled || this.textContent === 'Saved') {
         showAlert('Bill is already saved!');
@@ -413,7 +442,7 @@ document.getElementById('saveBillBtn')?.addEventListener('click', function() {
 
     const advance = parseFloat(document.getElementById('advanceInput').value) || 0;
     if (action === 'advance' && advance <= 0) {
-        showAlert('Advance Amount is required and must be greater than 0!');
+        showAlert('Advance Amount must be greater than 0!');
         document.getElementById('advanceInput').focus();
         return;
     }
@@ -437,13 +466,10 @@ document.getElementById('saveBillBtn')?.addEventListener('click', function() {
     .then(r => r.json())
     .then(d => {
         if (d.success) {
-            this.textContent = 'Saved';
-            this.style.background = '#95a5a6';
-            this.style.cursor = 'not-allowed';
-            document.getElementById('billAction').disabled = true;
+            disableBillActions(); // This disables Save + Add More Items + Dropdown
 
             if (action === 'advance') {
-                showAlert('Advance Payment Saved Successfully!You can now print the bill.');
+                showAlert('Advance Payment Saved Successfully!\nYou can now print the bill.');
             } else {
                 showAlert('Full Payment Completed! Printing...');
                 setTimeout(() => window.print(), 800);
@@ -461,24 +487,29 @@ document.getElementById('saveBillBtn')?.addEventListener('click', function() {
     });
 });
 
+// Other buttons
 document.getElementById('printBtn')?.addEventListener('click', () => window.print());
 document.getElementById('showQrBtn')?.addEventListener('click', () => {
     document.getElementById('qrPopup').style.display = 'flex';
 });
 
+// Alert functions
 function showAlert(msg) {
     document.getElementById('alertMessage').textContent = msg;
     document.getElementById('alertOverlay').style.display = 'block';
     document.getElementById('alertBox').style.display = 'block';
 }
+
 function closeAlert() {
     document.getElementById('alertOverlay').style.display = 'none';
     document.getElementById('alertBox').style.display = 'none';
 }
+
+// Confirm New Bill
 function confirmNewBill() {
     document.getElementById('alertMessage').innerHTML = 
-        'Are you sure you want to start a <strong>New Bill</strong>?<br><br>All current items and selections will be cleared.';
-    
+        'Are you sure you want to start a <strong>New Bill</strong>?<br><br>All current items will be cleared and you will go to dashboard.';
+
     document.getElementById('alertOverlay').style.display = 'block';
     document.getElementById('alertBox').style.display = 'block';
 
@@ -492,9 +523,18 @@ function confirmNewBill() {
     document.getElementById('alertOverlay').onclick = function() {
         closeAlert();
         document.querySelector('#alertBox button').textContent = 'OK';
+        document.querySelector('#alertBox button').onclick = closeAlert;
     };
 }
+
+// Run on page load: if bill already saved → disable buttons immediately
+<?php if ($is_advance_saved || $is_paid_saved): ?>
+    document.addEventListener('DOMContentLoaded', disableBillActions);
+<?php endif; ?>
+
+// Initial display update
 updateDisplay();
 </script>
+
 </body>
 </html>
