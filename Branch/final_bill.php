@@ -49,10 +49,9 @@ $advance_amount = $advance['advance_amount'];
 $remaining = $total - $advance_amount;
 
 $customer_name = $advance['customer_name'] ?: 'Customer';
-$school_name = $advance['school_name'] ?: '';  // Loaded but NOT shown
+$school_name = $advance['school_name'] ?: '';
 $printed_by = $_SESSION['username'] ?? 'Staff';
 
-// Current Nepali date/time when printing
 $bs_datetime = nepali_date_time();
 
 $branch_display = $advance['branch_name'] ?? $advance['branch'];
@@ -145,8 +144,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize_payment'])) 
         .back-link { 
             display:inline-block; margin:20px; padding:12px 25px; background:#667eea; color:white; text-decoration:none; border-radius:8px; 
         }
-        .total-row span { color:#2c3e50 !important; }
-        .total-row.grand-total span { font-weight:bold; }
+
+        /* Modal Styles */
+        .overlay { 
+            display:none; 
+            position:fixed; top:0; left:0; width:100%; height:100%; 
+            background:rgba(0,0,0,0.6); z-index:9998; 
+            justify-content:center; align-items:center;
+        }
+        .confirm-box, .success-box {
+            background:white; padding:30px; border-radius:12px; text-align:center; width:90%; max-width:400px; 
+            box-shadow:0 10px 30px rgba(0,0,0,0.3);
+        }
+        .confirm-box h3, .success-box h3 { margin:0 0 15px; font-size:22px; color:#2c3e50; }
+        .confirm-box p, .success-box p { font-size:18px; margin:10px 0 25px; }
+        .btn-group button {
+            padding:12px 25px; margin:8px; font-size:16px; border:none; border-radius:8px; cursor:pointer; font-weight:bold;
+        }
+        .btn-yes { background:#27ae60; color:white; }
+        .btn-no { background:#e74c3c; color:white; }
+        .success-box p { color:#27ae60; font-size:24px; font-weight:bold; margin:20px 0; }
     </style>
 </head>
 <body>
@@ -192,6 +209,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize_payment'])) 
             <span>GRAND TOTAL:</span>
             <span>Rs. <?php echo number_format($total, 2); ?></span>
         </div>
+
+        <!-- "All amounts cleared." – Same size & black color as other text – only when fully paid -->
+        <?php if ($payment_success): ?>
+        <div style="text-align:center; margin-top:15px; font-size:14px; color:#000;">
+           ** All amounts cleared **
+        </div>
+        <?php endif; ?>
     </div>
 
     <div class="footer-note">Note: Exchange available within seven days</div>
@@ -205,7 +229,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize_payment'])) 
         <p style="color:red; font-weight:bold; margin:10px 0;"><?php echo $error; ?></p>
     <?php endif; ?>
 
-    <form method="POST" class="form-group" style="display:inline-block;">
+    <form method="POST" id="paymentForm" class="form-group" style="display:inline-block;">
         <input type="number" name="final_payment" min="<?php echo max(1, $remaining - 10); ?>" 
                placeholder="Amount received" value="<?php echo $remaining; ?>" required>
         <select name="payment_method">
@@ -213,9 +237,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize_payment'])) 
             <option value="online">Online</option>
         </select>
         <br><br>
-        <button type="submit" name="finalize_payment" class="btn-pay">
+        <button type="button" class="btn-pay" onclick="showConfirmModal()">
             Complete Payment
         </button>
+        <input type="hidden" name="finalize_payment" value="1">
     </form>
 
     <button type="button" class="btn-print" onclick="window.print();">
@@ -229,18 +254,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize_payment'])) 
         Print Final Bill
     </button>
 </div>
-
-<script>
-    // Optional: Auto-print once after successful payment
-    alert("Payment completed successfully!");
-    // Uncomment the line below if you want auto-print after payment
-    // window.print();
-</script>
 <?php endif; ?>
 
 <div class="no-print" style="text-align:center; margin:30px;">
-    <a href="advance_payment.php" class="back-link">Back to Advance List</a>
+    <a href="advance_payment.php" class="back-link">Go Back</a>
 </div>
+
+<!-- Confirmation Modal -->
+<div class="overlay" id="confirmModal">
+    <div class="confirm-box">
+        <h3>Confirm Payment</h3>
+        <p>Are you sure you want to complete this payment?</p>
+        <p><strong>Amount:</strong> Rs. <span id="confirmAmount"><?php echo number_format($remaining, 2); ?></span></p>
+        <div class="btn-group">
+            <button class="btn-yes" onclick="document.getElementById('paymentForm').submit()">Yes</button>
+            <button class="btn-no" onclick="document.getElementById('confirmModal').style.display='none'">No</button>
+        </div>
+    </div>
+</div>
+
+<!-- Success Modal (only after payment) -->
+<?php if ($payment_success): ?>
+<div class="overlay" id="successModal" style="display:flex;">
+    <div class="success-box">
+        <h3>Success!</h3>
+        <p>Payment Completed Successfully</p>
+        <div class="btn-group">
+            <button class="btn-print" onclick="window.print()">
+                Print Final Bill
+            </button>
+            <button class="btn-yes" onclick="document.getElementById('successModal').style.display='none'" style="background:#34495e;">
+                Close
+            </button>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
+
+<script>
+function showConfirmModal() {
+    const amount = document.querySelector('input[name="final_payment"]').value;
+    document.getElementById('confirmAmount').textContent = parseFloat(amount).toLocaleString('en-NP', {minimumFractionDigits: 2});
+    document.getElementById('confirmModal').style.display = 'flex';
+}
+
+// Close modals when clicking outside
+document.getElementById('confirmModal')?.addEventListener('click', function(e) {
+    if (e.target === this) this.style.display = 'none';
+});
+document.getElementById('successModal')?.addEventListener('click', function(e) {
+    if (e.target === this) this.style.display = 'none';
+});
+</script>
 
 </body>
 </html>
