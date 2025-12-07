@@ -126,6 +126,9 @@ if (isset($_POST['select_school'])) {
                 <a href="sales_return.php" class="logout-btn" style="background:#667eea; margin-right:15px; padding:12px 25px;">
                    Sales Return
                 </a>
+                <a href="measurement.php" class="logout-btn" style="background:#667eea; margin-right:15px; padding:12px 25px;">
+                   Measurement
+                </a>
                 <a href="logout.php" class="logout-btn">
                     Logout
                 </a>

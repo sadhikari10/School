@@ -224,86 +224,82 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_save_advance']))
     // Increment bill number
     $final_bill_number = incrementBillCounter($pdo, $outlet_id, $fiscal_year);
     $bill_number = $final_bill_number;
-    $_SESSION['current_bill_number'] = $bill_number;
-// ——————— SAVE CUSTOM MEASUREMENTS (with school_id & outlet_id) ———————
+    $_SESSION['current_bill_number'] = $bill_number;// ——————— SAVE CUSTOM MEASUREMENTS PROPERLY (USING IDs) ———————
 require_once 'MeasurementHelper.php';
 $measHelper  = new MeasurementHelper($pdo);
-$customItems = $measHelper->getItems(); // name, price, quantity, measurements, size
+$customItems = $measHelper->getItems();
 
 if (!empty($customItems)) {
     $measurements = [];
     $prices       = [];
 
+    // First: Clear old entries for this bill (in case of update)
+    $pdo->prepare("DELETE FROM custom_measurement_items WHERE bill_number = ? AND fiscal_year = ?")
+        ->execute([$bill_number, $fiscal_year]);
+
     foreach ($customItems as $index => $item) {
-        // Clean item name
-        $rawName   = $item['name'] ?? 'Custom Item';
-        $cleanName = preg_replace('/\s*\(Custom Made\)$/i', '', $rawName);
-        $cleanName = trim($cleanName);
+        $itemIndex = $index + 1; // 1, 2, 3...
 
-        // Prevent empty key
-        if ($cleanName === '') {
-            $cleanName = 'Custom Item ' . ($index + 1);
-        }
+        // Clean name for display (same logic you already use)
+        $rawName = $item['item_name'] ?? $item['name'] ?? 'Custom Item';
+        $cleanName = trim(preg_replace('/\s*\(Custom Made\)$/i', '', $rawName));
+        if ($cleanName === '') $cleanName = 'Custom Item';
 
-        // Price × quantity
-        $price = (float)($item['price'] ?? 0);
-        $qty   = max(1, (int)($item['quantity'] ?? 1));        // ← fixed syntax here
-        $prices[$cleanName] = $price * $qty;
+        // Save item name + price + qty in the new table
+        $pdo->prepare("
+            INSERT INTO custom_measurement_items 
+                (bill_number, fiscal_year, item_index, item_name, price, quantity)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ")->execute([
+            $bill_number,
+            $fiscal_year,
+            $itemIndex,
+            $cleanName,
+            (float)($item['price'] ?? 0),
+            max(1, (int)($item['quantity'] ?? 1))
+        ]);
 
-        // ——— Handle measurements (array or JSON string) ———
+        // Use numeric key in measurements & prices
+        $key = (string)$itemIndex;  // "1", "2", "3"...
+
+        $prices[$key] = (float)($item['price'] ?? 0) * max(1, (int)($item['quantity'] ?? 1));
+
+        // Save measurements
         $rawMeas = $item['measurements'] ?? null;
-
         if (is_array($rawMeas)) {
-            $measurements[$cleanName] = $rawMeas;
-        } elseif (is_string($rawMeas)) {
+            $measurements[$key] = $rawMeas;
+        } elseif (is_string($rawMeas) && $rawMeas !== '') {
             $decoded = json_decode($rawMeas, true);
-            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
-                $measurements[$cleanName] = $decoded;
-            } else {
-                $measurements[$cleanName] = [
-                    'size' => $item['size'] ?? 'Custom',
-                    'note' => 'Invalid measurement data'
-                ];
-            }
+            $measurements[$key] = (json_last_error() === JSON_ERROR_NONE && is_array($decoded))
+                ? $decoded : ['size' => 'Custom'];
         } else {
-            $measurements[$cleanName] = [
-                'size' => $item['size'] ?? 'Custom'
-            ];
+            $measurements[$key] = ['size' => 'Custom'];
         }
     }
 
-    // Encode only once (clean JSON)
     $measurements_json = json_encode($measurements, JSON_UNESCAPED_UNICODE);
     $prices_json       = json_encode($prices, JSON_UNESCAPED_UNICODE);
 
+    // Save only the JSON (with numeric keys)
     $stmt = $pdo->prepare("
         INSERT INTO customer_measurements 
             (bill_number, fiscal_year, school_id, outlet_id, customer_name, measurements, prices, created_at, created_by)
-        VALUES 
-            (?, ?, ?, ?, ?, ?, ?, NOW(), ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)
         ON DUPLICATE KEY UPDATE
-            measurements  = VALUES(measurements),
-            prices        = VALUES(prices),
+            measurements = VALUES(measurements),
+            prices = VALUES(prices),
             customer_name = VALUES(customer_name),
-            school_id     = VALUES(school_id),
-            outlet_id     = VALUES(outlet_id),
-            created_at    = NOW(),
-            created_by    = VALUES(created_by)
+            school_id = VALUES(school_id),
+            outlet_id = VALUES(outlet_id)
     ");
 
     $stmt->execute([
-        $bill_number,
-        $fiscal_year,
+        $bill_number, $fiscal_year,
         $_SESSION['selected_school_id'] ?? null,
         $_SESSION['outlet_id'] ?? null,
-        $customer_name,
-        $measurements_json,
-        $prices_json,
-        $printed_by
+        $customer_name, $measurements_json, $prices_json, $printed_by
     ]);
 }
-
-
     // Save advance payment (unchanged)
     $pdo->prepare("INSERT INTO advance_payment 
         (bill_number, branch, outlet_id, fiscal_year, school_name, customer_name, advance_amount, total, payment_method, printed_by, bs_datetime, items_json, status)
