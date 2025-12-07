@@ -1,6 +1,7 @@
 <?php
 // bill.php - ONLY BILL NUMBER LOGIC FIXED (everything else 100% original)
 session_start();
+ob_start();
 require '../Common/connection.php';
 require '../Common/nepali_date.php';
 
@@ -142,7 +143,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
 // 2. ALWAYS ADD CUSTOM MEASUREMENT ITEMS (from MeasurementHelper)
 // ———————————————————————————————————————
 require_once 'MeasurementHelper.php';
-$measHelper = new MeasurementHelper();
+$measHelper = new MeasurementHelper($pdo);
 
 foreach ($measHelper->getForOrder() as $m) {
     $price   = (float)($m['price'] ?? 0);
@@ -227,7 +228,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_save_advance']))
 
     // ——————— SAVE CUSTOM MEASUREMENTS (with school_id & outlet_id) ———————
     require_once 'MeasurementHelper.php';
-    $measHelper = new MeasurementHelper(z);
+    $measHelper = new MeasurementHelper($pdo);
     $customItems = $measHelper->getItems();
 
     if (!empty($customItems)) {
@@ -280,8 +281,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_save_advance']))
             $printed_by, $print_time_db, $items_json
         ]);
 
+    ob_clean(); // REMOVE ANY PREVIOUS OUTPUT
+    header('Content-Type: application/json; charset=utf-8');
     echo json_encode(['success' => true, 'bill_number' => $bill_number]);
     exit;
+
 }
 
 // ————————————————————————————————————————
@@ -309,7 +313,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
 
     // ——————— SAVE CUSTOM MEASUREMENTS (with school_id & outlet_id) ———————
     require_once 'MeasurementHelper.php';
-    $measHelper = new MeasurementHelper();
+    $measHelper = new MeasurementHelper($pdo);
     $customItems = $measHelper->getItems();
 
     if (!empty($customItems)) {
@@ -382,6 +386,15 @@ if (isset($_POST['start_new_bill'])) {
         $_SESSION['selected_sizes'],
         $_SESSION['current_bill_number']
     );
+
+    require_once 'MeasurementHelper.php';
+    $measHelper = new MeasurementHelper($pdo);
+    $measHelper->clearAllForCurrentSession(
+        $_SESSION['user_id'], 
+        $_SESSION['outlet_id'], 
+        $_SESSION['selected_school_id'] ?? null
+    );
+
     header('Location: dashboard.php');
     exit;
 }

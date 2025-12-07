@@ -138,6 +138,15 @@ class MeasurementHelper
         return $out;
     }
 
+    public function clearAllForCurrentSession(): bool
+{
+    $sql = "DELETE FROM temp_measurements WHERE {$this->getSessionFilter()}";
+    $stmt = $this->pdo->prepare($sql);
+    $stmt->execute();
+
+    return $stmt->rowCount() > 0;
+}
+
     public function renderModal()
 {
     $items = $this->getItems();
