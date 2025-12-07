@@ -10,17 +10,17 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin' || !isset($_SESSI
 $outlet_id   = $_SESSION['selected_outlet_id'];
 $outlet_name = $_SESSION['selected_outlet_name'];
 
-// Get returns + real username from 'login' table
+// Get exchanges + real username from 'login' table
 $stmt = $pdo->prepare("
     SELECT rel.*,
            COALESCE(l.username, 'Unknown User') AS logged_by_name
     FROM return_exchange_log rel
     LEFT JOIN login l ON rel.user_id = l.id
-    WHERE rel.outlet_id = ? AND rel.action = 'returned'
+    WHERE rel.outlet_id = ? AND rel.action = 'exchanged'
     ORDER BY rel.logged_datetime DESC
 ");
 $stmt->execute([$outlet_id]);
-$returns = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$exchanges = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 
 <!DOCTYPE html>
@@ -28,7 +28,7 @@ $returns = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Returned Orders - <?php echo htmlspecialchars($outlet_name); ?></title>
+    <title>Exchanged Orders - <?php echo htmlspecialchars($outlet_name); ?></title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
         body{font-family:'Segoe UI',sans-serif;background:linear-gradient(135deg,#8e44ad,#9b59b6);min-height:100vh;padding:40px 20px;color:#2c3e50;}
@@ -46,10 +46,10 @@ $returns = $stmt->fetchAll(PDO::FETCH_ASSOC);
 </head>
 <body>
 <div class="container">
-    <h1>Returned Orders – <?php echo htmlspecialchars($outlet_name); ?></h1>
+    <h1>Exchanged Orders – <?php echo htmlspecialchars($outlet_name); ?></h1>
 
-    <?php if (empty($returns)): ?>
-        <p class="no-data">No returned orders found.</p>
+    <?php if (empty($exchanges)): ?>
+        <p class="no-data">No exchanged orders found.</p>
     <?php else: ?>
         <table>
             <thead>
@@ -57,14 +57,14 @@ $returns = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <th>ID</th>
                     <th>Bill ID</th>
                     <th>Reason</th>
-                    <th class="amount">Amt Returned<br><small>(by Customer)</small></th>
-                    <th class="amount">Amt Refunded<br><small>(to Customer)</small></th>
+                    <th class="amount">Amt Paid<br><small>(by Customer)</small></th>
+                    <th class="amount">Amt Received<br><small>(from Customer)</small></th>
                     <th>Logged By</th>
                     <th>Date & Time</th>
                 </tr>
             </thead>
             <tbody>
-                <?php foreach ($returns as $row): ?>
+                <?php foreach ($exchanges as $row): ?>
                 <tr>
                     <td><?php echo $row['id']; ?></td>
                     <td><strong><?php echo htmlspecialchars($row['bill_id']); ?></strong></td>

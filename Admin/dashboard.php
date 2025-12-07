@@ -199,10 +199,10 @@ body{
         </a>
 
         <!-- Order Cancel -->
-        <a href="order_cancel.php" class="card report-card">
+        <a href="order_exchange.php" class="card report-card">
             <i class="fas fa-ban"></i>
-            <h3>Order Cancel</h3>
-            <p>View Cancelled Orders</p>
+            <h3>Order Exchange</h3>
+            <p>View Exchanged orders</p>
         </a>
 
         <!-- Order Return -->
