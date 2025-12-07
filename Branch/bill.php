@@ -225,60 +225,77 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_save_advance']))
     $final_bill_number = incrementBillCounter($pdo, $outlet_id, $fiscal_year);
     $bill_number = $final_bill_number;
     $_SESSION['current_bill_number'] = $bill_number;
+// ——————— SAVE CUSTOM MEASUREMENTS (with school_id & outlet_id) ———————
+require_once 'MeasurementHelper.php';
+$measHelper  = new MeasurementHelper($pdo);
+$customItems = $measHelper->getItems(); // name, price, quantity, measurements, size
 
-    // ——————— SAVE CUSTOM MEASUREMENTS (with school_id & outlet_id) ———————
-    require_once 'MeasurementHelper.php';
-    $measHelper = new MeasurementHelper($pdo);
-    $customItems = $measHelper->getItems();
-   // Already built above for bill display
-if (!empty($custom_items)) {
+if (!empty($customItems)) {
     $measurements = [];
-    $prices = [];
+    $prices       = [];
 
-    // Decode items_json from session (advance table)
-    $itemsList = json_decode($_SESSION['temp_items_json'] ?? '[]', true);
+    foreach ($customItems as $index => $item) {
+        // Clean item name
+        $rawName   = $item['name'] ?? 'Custom Item';
+        $cleanName = preg_replace('/\s*\(Custom Made\)$/i', '', $rawName);
+        $cleanName = trim($cleanName);
 
-    foreach ($custom_items as $cItem) {
-        // Match name from items_json if needed
-        $foundName = null;
-        foreach ($itemsList as $i) {
-            if (isset($i['size']) && strtolower($i['size']) === 'custom' && $i['price'] == $cItem['price']) {
-                $foundName = $i['name'];
-                break;
-            }
+        // Prevent empty key
+        if ($cleanName === '') {
+            $cleanName = 'Custom Item ' . ($index + 1);
         }
 
-        $name = $foundName ?? $cItem['name'];
+        // Price × quantity
+        $price = (float)($item['price'] ?? 0);
+        $qty   = max(1, (int)($item['quantity'] ?? 1));        // ← fixed syntax here
+        $prices[$cleanName] = $price * $qty;
 
-        $measurements[$name] = $cItem['measurements'] ?? []; // Ensure measurements exist
-        $prices[$name] = $cItem['price'] * $cItem['qty'];
+        // ——— Handle measurements (array or JSON string) ———
+        $rawMeas = $item['measurements'] ?? null;
+
+        if (is_array($rawMeas)) {
+            $measurements[$cleanName] = $rawMeas;
+        } elseif (is_string($rawMeas)) {
+            $decoded = json_decode($rawMeas, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                $measurements[$cleanName] = $decoded;
+            } else {
+                $measurements[$cleanName] = [
+                    'size' => $item['size'] ?? 'Custom',
+                    'note' => 'Invalid measurement data'
+                ];
+            }
+        } else {
+            $measurements[$cleanName] = [
+                'size' => $item['size'] ?? 'Custom'
+            ];
+        }
     }
 
-    // JSON encode
+    // Encode only once (clean JSON)
     $measurements_json = json_encode($measurements, JSON_UNESCAPED_UNICODE);
-    $prices_json = json_encode($prices, JSON_UNESCAPED_UNICODE);
+    $prices_json       = json_encode($prices, JSON_UNESCAPED_UNICODE);
 
-    // Save
-    $school_id = $_SESSION['selected_school_id'] ?? null;
-    $outlet_id_current = $_SESSION['outlet_id'] ?? null;
-
-    $stmt = $pdo->prepare("INSERT INTO customer_measurements 
-        (bill_number, fiscal_year, school_id, outlet_id, customer_name, measurements, prices, created_at, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)
+    $stmt = $pdo->prepare("
+        INSERT INTO customer_measurements 
+            (bill_number, fiscal_year, school_id, outlet_id, customer_name, measurements, prices, created_at, created_by)
+        VALUES 
+            (?, ?, ?, ?, ?, ?, ?, NOW(), ?)
         ON DUPLICATE KEY UPDATE
-        measurements = VALUES(measurements),
-        prices = VALUES(prices),
-        customer_name = VALUES(customer_name),
-        school_id = VALUES(school_id),
-        outlet_id = VALUES(outlet_id),
-        created_at = NOW(),
-        created_by = VALUES(created_by)");
+            measurements  = VALUES(measurements),
+            prices        = VALUES(prices),
+            customer_name = VALUES(customer_name),
+            school_id     = VALUES(school_id),
+            outlet_id     = VALUES(outlet_id),
+            created_at    = NOW(),
+            created_by    = VALUES(created_by)
+    ");
 
     $stmt->execute([
         $bill_number,
         $fiscal_year,
-        $school_id,
-        $outlet_id_current,
+        $_SESSION['selected_school_id'] ?? null,
+        $_SESSION['outlet_id'] ?? null,
         $customer_name,
         $measurements_json,
         $prices_json,
