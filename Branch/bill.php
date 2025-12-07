@@ -413,7 +413,8 @@ if (isset($_POST['start_new_bill'])) {
         $_SESSION['temp_items_json'],
         $_SESSION['temp_school_name'],
         $_SESSION['selected_sizes'],
-        $_SESSION['current_bill_number']
+        $_SESSION['current_bill_number'],
+        $_SESSION['temp_regular_items']
     );
 
     require_once 'MeasurementHelper.php';
