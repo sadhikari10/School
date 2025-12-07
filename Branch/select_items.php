@@ -450,6 +450,10 @@ function showSizeModal(key, name, emoji) {
                     map[code] = (map[code] || 0) + 1;
                     selectedSizes[key] = stringify(map);
                     if (!selectedSizes[key]) delete selectedSizes[key];
+
+                    updateHiddenOrderFields();   // ← ADD THIS LINE ONLY
+                    updateIndicators();          // ← AND THIS ONE
+
                     showSizeModal(key, name, emoji);
                     save();
                 };
