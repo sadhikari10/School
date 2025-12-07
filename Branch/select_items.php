@@ -545,7 +545,7 @@ function showSizeModal(key, name, emoji) {
 
                     updateHiddenOrderFields();   // ← ADD THIS LINE ONLY
                     updateIndicators();          // ← AND THIS ONE
-
+                    saveSelectedItemsToSession(selectedSizes);
                     showSizeModal(key, name, emoji);
                     save();
                 };
@@ -570,6 +570,7 @@ function showSizeModal(key, name, emoji) {
                 map[code] = (map[code] || 0) + 1;
                 selectedSizes[key] = stringify(map);
                 if (!selectedSizes[key]) delete selectedSizes[key];
+                saveSelectedItemsToSession(selectedSizes);
                 showSizeModal(key, name, emoji);
                 save();
             };
@@ -586,8 +587,17 @@ function showSizeModal(key, name, emoji) {
 
 function clearCurrentItem() {
     delete selectedSizes[currentKey];
+    saveSelectedItemsToSession(selectedSizes);
     showSizeModal(currentKey, currentItemName, document.getElementById('modalIcon').textContent);
     save();
+}
+
+function saveSelectedItemsToSession(itemsArray) {
+    fetch("update_selected_items.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: itemsArray })
+    });
 }
 
 // Measurement Functions
