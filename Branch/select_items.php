@@ -612,6 +612,7 @@ function saveMeasurementItem() {
         const value = row.querySelector('.meas-value').value.trim();
         if (label && value) measurements[label] = value;
     }
+    const quantity = parseInt(document.getElementById('measQuantity').value) || 1;
     if (!name || price <= 0 || Object.keys(measurements).length === 0) {
         alert('Please fill all fields: name, price, and at least one measurement.');
         return;
@@ -619,7 +620,7 @@ function saveMeasurementItem() {
     fetch('', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ action: 'add_measurement', name, price, measurements: JSON.stringify(measurements) })
+        body: new URLSearchParams({ action: 'add_measurement', name, price,quantity:quantity, measurements: JSON.stringify(measurements) })
     }).then(() => location.reload());
 }
 function removeMeasItem(id) {
@@ -663,6 +664,24 @@ document.addEventListener('DOMContentLoaded', () => {
     updateHiddenOrderFields();
     setInterval(save, 8000);
 });
+function openMeasurementModal() {
+    document.getElementById('measurementModal').style.display = 'flex';
+    
+    // Reset form fields
+    document.getElementById('measItemName').value = '';
+    document.getElementById('measPrice').value = '';
+    document.getElementById('measQuantity').value = '1';  // ← Always start with 1
+    
+    // Clear all measurement rows except the first one
+    const container = document.getElementById('measFields');
+    const firstRow = container.querySelector('.meas-row');
+    container.innerHTML = '';
+    if (firstRow) container.appendChild(firstRow.cloneNode(true));
+    
+    // Clear inputs in the first row
+    const inputs = container.querySelectorAll('input');
+    inputs.forEach(input => input.value = '');
+}
 </script>
 </body>
 </html>

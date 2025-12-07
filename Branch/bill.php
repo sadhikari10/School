@@ -227,7 +227,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_save_advance']))
 
     // ——————— SAVE CUSTOM MEASUREMENTS (with school_id & outlet_id) ———————
     require_once 'MeasurementHelper.php';
-    $measHelper = new MeasurementHelper();
+    $measHelper = new MeasurementHelper(z);
     $customItems = $measHelper->getItems();
 
     if (!empty($customItems)) {

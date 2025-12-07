@@ -33,6 +33,32 @@ class MeasurementHelper
         $stmt = $this->pdo->query($sql);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
+    public function saveMeasurementsToPermanent($bill_number, $fiscal_year, $school_id, $customer_name) {
+    $items = $this->getItems();
+    if (empty($items)) return;
+
+    $measurements = [];
+    $prices = [];
+
+    foreach ($items as $item) {
+        $clean_name = preg_replace('/\s*\(Custom Made\)$/i', '', $item['item_name']);
+        $measurements[$clean_name] = json_decode($item['measurements'], true);
+        $prices[$clean_name] = $item['price'] * $item['quantity'];
+    }
+
+    $meas_json = json_encode($measurements, JSON_UNESCAPED_UNICODE);
+    $price_json = json_encode($prices, JSON_UNESCAPED_UNICODE);
+
+    $stmt = $this->pdo->prepare("INSERT INTO customer_measurements 
+        (bill_number, fiscal_year, school_id, outlet_id, customer_name, measurements, prices, created_at, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)
+        ON DUPLICATE KEY UPDATE measurements = VALUES(measurements), prices = VALUES(prices)");
+    
+    $stmt->execute([
+        $bill_number, $fiscal_year, $school_id, $this->outletId,
+        $customer_name, $meas_json, $price_json, $_SESSION['username'] ?? 'User'
+    ]);
+}
 
     public function addItem(string $name, array $measurements, float $price, int $quantity = 1): bool
     {
@@ -148,7 +174,7 @@ class MeasurementHelper
                                style="width:100%;padding:14px;font-size:16px;border-radius:10px;border:1px solid #ccc;">
                     </div>
                     <div style="flex:1;">
-                        <input type="number" id="measQuantity" placeholder="Quantity" min="1" step="1" value="1"
+                        <input type="number" id="measQuantity" placeholder="Quantity" min="1" step="1"
                                style="width:100%;padding:14px;font-size:16px;border-radius:10px;border:1px solid #ccc;">
                     </div>
                 </div>
