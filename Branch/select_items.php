@@ -22,24 +22,46 @@ $selector = new UniformSelector($pdo, $school_id, $outlet_id);
 $itemsData = $selector->getItems();
 $items = $itemsData['items'];
 
-$measHelper = new MeasurementHelper();
+$measHelper = new MeasurementHelper($pdo);
 
-// AJAX Handlers
-if ($_POST['action'] ?? '' === 'add_measurement') {
-    $name = trim($_POST['name'] ?? '');
-    $price = (float)($_POST['price'] ?? 0);
-    $measurements = json_decode($_POST['measurements'] ?? '{}', true);
-    $success = $measHelper->addItem($name, $measurements, $price);
-    echo json_encode(['success' => $success]);
-    exit();
+// Add this at the very top of select_items.php, right after session_start();
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+    if ($_POST['action'] === 'add_measurement') {
+        $name = trim($_POST['name'] ?? '');
+        $price = (float)($_POST['price'] ?? 0);
+        $quantity = (int)($_POST['quantity'] ?? 1);
+        $measurements = json_decode($_POST['measurements'] ?? '{}', true) ?? [];
+
+        $success = $measHelper->addItem($name, $measurements, $price, $quantity);
+
+        header('Content-Type: application/json');
+        echo json_encode(['success' => $success]);
+        exit;
+    }
+
+    if ($_POST['action'] === 'remove_measurement') {
+        $id = (int)($_POST['id'] ?? 0);
+
+        header('Content-Type: application/json');
+
+        if ($id <= 0) {
+            echo json_encode(['success' => false, 'error' => 'Invalid ID']);
+            exit;
+        }
+
+        try {
+            $stmt = $pdo->prepare("DELETE FROM temp_measurements WHERE id = ?");
+            $stmt->execute([$id]);
+            $deleted = $stmt->rowCount() > 0;
+
+            echo json_encode(['success' => $deleted]);
+        } catch (Exception $e) {
+            error_log("Delete failed: " . $e->getMessage());
+            echo json_encode(['success' => false, 'error' => 'DB Error']);
+        }
+        exit;
+    }
 }
-
-if ($_POST['action'] ?? '' === 'remove_measurement') {
-    $measHelper->removeItem((int)$_POST['index']);
-    echo json_encode(['success' => true]);
-    exit();
-}
-
 // Pre-calculate brand count per item
 $brandCountPerItem = [];
 foreach ($items as $name => $sizes) {
@@ -246,7 +268,30 @@ if ($_POST['save_session'] ?? false) {
         </div>
     </div>
 </div>
-
+<!-- Beautiful Centered Confirm Modal -->
+<div class="modal" id="confirmDeleteModal" style="display:none; align-items:center; justify-content:center;">
+    <div class="modal-content" style="max-width:420px; width:90%; border-radius:16px; box-shadow:0 20px 50px rgba(0,0,0,0.3);">
+        <div class="modal-header" style="background:#e74c3c; color:white; border-radius:16px 16px 0 0; padding:20px; text-align:center;">
+            <h3 style="margin:0; font-size:22px;">Remove Item?</h3>
+        </div>
+        <div style="padding:25px; text-align:center; font-size:16px; color:#444;">
+            <p style="margin:0 0 15px 0;">Are you sure you want to remove this custom item?</p>
+            <p style="margin:0; font-weight:600; color:#2c3e50;" id="confirmItemName"></p>
+        </div>
+        <div style="display:flex; gap:15px; padding:0 25px 25px;">
+            <button type="button" 
+                    onclick="closeConfirmDelete()" 
+                    style="flex:1; padding:14px; background:#95a5a6; color:white; border:none; border-radius:10px; font-size:16px; cursor:pointer;">
+                Cancel
+            </button>
+            <button type="button" 
+                    id="confirmDeleteBtn" 
+                    style="flex:1; padding:14px; background:#e74c3c; color:white; border:none; border-radius:10px; font-size:16px; font-weight:600; cursor:pointer;">
+                Yes, Remove
+            </button>
+        </div>
+    </div>
+</div>
 <!-- Hidden form to clear session -->
 <form method="POST" id="clearForm" style="display:none;">
     <input type="hidden" name="clear_selections" value="1">
@@ -530,16 +575,33 @@ function saveMeasurementItem() {
         body: new URLSearchParams({ action: 'add_measurement', name, price, measurements: JSON.stringify(measurements) })
     }).then(() => location.reload());
 }
+function removeMeasItem(id) {
+    if (!confirm('Remove this custom item?')) return;
 
-function removeMeasItem(index) {
-    if (confirm('Remove this item?')) {
-        fetch('', {
-            method: 'POST',
-            body: new URLSearchParams({ action: 'remove_measurement', index })
-        }).then(() => location.reload());
-    }
+    fetch(location.href, {  // better than ''
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+            'action': 'remove_measurement',
+            'id': id
+        })
+    })
+    .then(r => r.json())
+    .then(result => {
+        console.log('Delete result:', result);
+        if (result.success) {
+            location.reload();  // or better: remove DOM element without reload
+        } else {
+            alert('Failed to delete. Item may already be removed.');
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        alert('Network error');
+    });
 }
-
 // Close modal when clicking outside
 document.addEventListener('click', e => {
     ['measurementModal', 'sizeModal', 'selectedItemsModal', 'confirmModal'].forEach(id => {
