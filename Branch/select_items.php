@@ -62,6 +62,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         exit;
     }
 }
+// Clear everything (custom measurements + selected sizes) and go back
+if (isset($_POST['clear_and_back'])) {
+    // 1. Delete all custom measurements for this session
+    $stmt = $pdo->prepare("DELETE FROM temp_measurements WHERE session_id = ?");
+    $stmt->execute([session_id()]);
+
+    // 2. Clear selected sizes from session
+    unset($_SESSION['selected_sizes']);
+
+    // Optional: clear any other temp data if you have
+    // $_SESSION['something_else'] = null;
+
+    echo json_encode(['success' => true]);
+    exit;
+}
 // Pre-calculate brand count per item
 $brandCountPerItem = [];
 foreach ($items as $name => $sizes) {
@@ -251,22 +266,42 @@ if ($_POST['save_session'] ?? false) {
     </div>
 
     <!-- Confirm Back Modal -->
-    <div class="modal" id="confirmModal">
-        <div class="confirm-content">
-            <div class="confirm-header">
-                <span class="confirm-icon">Warning</span>
-                <h3>Leave This Page?</h3>
-            </div>
-            <div class="confirm-body">
-                <p>You have selected items. Going back will clear all selections.</p>
-                <div class="confirm-warning">This action cannot be undone.</div>
-            </div>
-            <div class="confirm-actions">
-                <button type="button" class="confirm-cancel-btn" onclick="closeConfirm()">Cancel</button>
-                <button type="button" class="confirm-clear-btn" onclick="confirmClear()">Yes, Clear & Go Back</button>
+    <!-- Beautiful Confirmation Modal for "Back to Schools" -->
+<div class="modal" id="confirmModal" style="display:none; align-items:center; justify-content:center; z-index:9999;">
+    <div class="modal-content" style="max-width:460px; width:90%; border-radius:18px; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,0.35); background:white;">
+        
+        <!-- Header – Red-Orange gradient -->
+        <div style="background:linear-gradient(135deg, #e74c3c, #c0392b); color:white; padding:22px 20px; text-align:center;">
+            <h3 style="margin:0; font-size:24px; font-weight:700;">Leave This Page?</h3>
+        </div>
+
+        <!-- Body -->
+        <div style="padding:28px 25px; text-align:center; color:#2c3e50;">
+            <p style="font-size:17px; margin:0 0 18px 0; line-height:1.5;">
+                You have selected items and/or added custom measurements.
+            </p>
+            <div style="background:#fff0f0; border:2px solid #e74c3c; border-radius:12px; padding:16px; color:#c0392b; font-weight:600; font-size:15px;">
+                Going back will <strong>clear everything</strong> and cannot be undone.
             </div>
         </div>
+
+        <!-- Buttons – Big, bold, colorful -->
+        <div style="display:flex; gap:15px; padding:0 25px 30px;">
+            <button type="button" 
+                    class="confirm-cancel-btn" 
+                    onclick="closeConfirm()"
+                    style="flex:1; padding:16px; background:#95a5a6; color:white; border:none; border-radius:12px; font-size:17px; font-weight:600; cursor:pointer; transition:0.2s;">
+                Cancel
+            </button>
+            <button type="button" 
+                    class="confirm-clear-btn" 
+                    onclick="confirmClear()"
+                    style="flex:1; padding:16px; background:#e74c3c; color:white; border:none; border-radius:12px; font-size:17px; font-weight:600; cursor:pointer; transition:0.2s; box-shadow:0 6px 20px rgba(231,76,60,0.4);">
+                Yes, Clear & Go Back
+            </button>
+        </div>
     </div>
+</div>
 </div>
 <!-- Beautiful Centered Confirm Modal -->
 <div class="modal" id="confirmDeleteModal" style="display:none; align-items:center; justify-content:center;">
@@ -348,9 +383,21 @@ function checkAndShowConfirmModal() {
     }
 }
 function confirmClear() {
-    document.getElementById('clearForm').submit();
+    // First: delete everything via AJAX
+    fetch(location.href, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'clear_and_back=1'
+    })
+    .then(() => {
+        // Then go back to dashboard
+        location.href = 'dashboard.php';
+    })
+    .catch(() => {
+        // Even if AJAX fails, still go back (data already safe or non-existent)
+        location.href = 'dashboard.php';
+    });
 }
-
 function showSummary() {
     const list = document.getElementById('summaryList');
     list.innerHTML = '';
