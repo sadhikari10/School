@@ -423,29 +423,68 @@ function showSizeModal(key, name, emoji) {
     const selected = parse(selectedSizes[key] || '');
     const showHeader = brandCountPerItem[name] > 1;
     let lastBrand = null;
-    sizes.forEach(s => {
-        if (showHeader && s.brand !== lastBrand) {
-            lastBrand = s.brand;
-            const h = document.createElement('div');
-            h.className = 'brand-header';
-            h.textContent = s.brand + ' Brand';
-            grid.appendChild(h);
-        }
-        const code = `${s.size}|${s.brand}`;
-        const qty = selected[code] || 0;
-        const box = document.createElement('div');
-        box.className = 'size-box' + (qty > 0 ? ' selected-in-modal has-quantity' : '');
-        box.onclick = () => {
-            const map = parse(selectedSizes[key] || '');
-            map[code] = (map[code] || 0) + 1;
-            selectedSizes[key] = stringify(map);
-            if (!selectedSizes[key]) delete selectedSizes[key];
-            showSizeModal(key, name, emoji);
-            save();
-        };
-        box.innerHTML = `<div class="size-label">${s.size}</div><div class="size-price">Rs. ${Number(s.price).toLocaleString()}</div>${qty > 0 ? `<div class="qty-badge">${qty}</div>` : ''}`;
-        grid.appendChild(box);
-    });
+        if (showHeader) {
+        // Group sizes by brand
+        const brands = {};
+        sizes.forEach(s => {
+            if (!brands[s.brand]) brands[s.brand] = [];
+            brands[s.brand].push(s);
+        });
+
+        Object.keys(brands).forEach(brand => {
+            // Brand Header - full row
+            const header = document.createElement('div');
+            header.style.cssText = 'grid-column: 1 / -1; background: #f0f2ff; padding: 14px 20px; border-radius: 12px; font-weight: 700; font-size: 1.1rem; color: #4a5568; margin: 20px 0 12px 0; text-align: left; border-left: 5px solid #667eea;';
+            header.textContent = brand + ' Brand';
+            grid.appendChild(header);
+
+            // Sizes for this brand - in their own row
+            brands[brand].forEach(s => {
+                const code = `${s.size}|${s.brand}`;
+                const qty = selected[code] || 0;
+
+                const box = document.createElement('div');
+                box.className = 'size-box' + (qty > 0 ? ' selected-in-modal has-quantity' : '');
+                box.onclick = () => {
+                    const map = parse(selectedSizes[key] || '');
+                    map[code] = (map[code] || 0) + 1;
+                    selectedSizes[key] = stringify(map);
+                    if (!selectedSizes[key]) delete selectedSizes[key];
+                    showSizeModal(key, name, emoji);
+                    save();
+                };
+                box.innerHTML = `
+                    <div class="size-label">${s.size}</div>
+                    <div class="size-price">Rs. ${Number(s.price).toLocaleString()}</div>
+                    ${qty > 0 ? `<div class="qty-badge">${qty}</div>` : ''}
+                `;
+                grid.appendChild(box);
+            });
+        });
+    } else {
+        // Single brand - just list sizes normally
+        sizes.forEach(s => {
+            const code = `${s.size}|${s.brand}`;
+            const qty = selected[code] || 0;
+
+            const box = document.createElement('div');
+            box.className = 'size-box' + (qty > 0 ? ' selected-in-modal has-quantity' : '');
+            box.onclick = () => {
+                const map = parse(selectedSizes[key] || '');
+                map[code] = (map[code] || 0) + 1;
+                selectedSizes[key] = stringify(map);
+                if (!selectedSizes[key]) delete selectedSizes[key];
+                showSizeModal(key, name, emoji);
+                save();
+            };
+            box.innerHTML = `
+                <div class="size-label">${s.size}</div>
+                <div class="size-price">Rs. ${Number(s.price).toLocaleString()}</div>
+                ${qty > 0 ? `<div class="qty-badge">${qty}</div>` : ''}
+            `;
+            grid.appendChild(box);
+        });
+    }
     document.getElementById('sizeModal').style.display = 'flex';
 }
 
