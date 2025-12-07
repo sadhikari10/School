@@ -230,46 +230,62 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_save_advance']))
     require_once 'MeasurementHelper.php';
     $measHelper = new MeasurementHelper($pdo);
     $customItems = $measHelper->getItems();
+   // Already built above for bill display
+if (!empty($custom_items)) {
+    $measurements = [];
+    $prices = [];
 
-    if (!empty($customItems)) {
-        $measurements = [];
-        $prices = [];
+    // Decode items_json from session (advance table)
+    $itemsList = json_decode($_SESSION['temp_items_json'] ?? '[]', true);
 
-        foreach ($customItems as $item) {
-            $clean_name = preg_replace('/\s*\(Custom Made\)$/i', '', $item['name']);
-            $measurements[$clean_name] = $item['measurements'];
-            $prices[$clean_name] = $item['price'] * $item['quantity'];
+    foreach ($custom_items as $cItem) {
+        // Match name from items_json if needed
+        $foundName = null;
+        foreach ($itemsList as $i) {
+            if (isset($i['size']) && strtolower($i['size']) === 'custom' && $i['price'] == $cItem['price']) {
+                $foundName = $i['name'];
+                break;
+            }
         }
 
-        $measurements_json = json_encode($measurements, JSON_UNESCAPED_UNICODE);
-        $prices_json       = json_encode($prices, JSON_UNESCAPED_UNICODE);
+        $name = $foundName ?? $cItem['name'];
 
-        $school_id = $_SESSION['selected_school_id'] ?? null;
-        $outlet_id_current = $_SESSION['outlet_id'] ?? null; // current outlet
-
-        $stmt = $pdo->prepare("INSERT INTO customer_measurements 
-            (bill_number, fiscal_year, school_id, outlet_id, customer_name, measurements, prices, created_at, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)
-            ON DUPLICATE KEY UPDATE
-            measurements = VALUES(measurements),
-            prices = VALUES(prices),
-            customer_name = VALUES(customer_name),
-            school_id = VALUES(school_id),
-            outlet_id = VALUES(outlet_id),
-            created_at = NOW(),
-            created_by = VALUES(created_by)");
-
-        $stmt->execute([
-            $bill_number,
-            $fiscal_year,
-            $school_id,
-            $outlet_id_current,
-            $customer_name,
-            $measurements_json,
-            $prices_json,
-            $printed_by
-        ]);
+        $measurements[$name] = $cItem['measurements'] ?? []; // Ensure measurements exist
+        $prices[$name] = $cItem['price'] * $cItem['qty'];
     }
+
+    // JSON encode
+    $measurements_json = json_encode($measurements, JSON_UNESCAPED_UNICODE);
+    $prices_json = json_encode($prices, JSON_UNESCAPED_UNICODE);
+
+    // Save
+    $school_id = $_SESSION['selected_school_id'] ?? null;
+    $outlet_id_current = $_SESSION['outlet_id'] ?? null;
+
+    $stmt = $pdo->prepare("INSERT INTO customer_measurements 
+        (bill_number, fiscal_year, school_id, outlet_id, customer_name, measurements, prices, created_at, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)
+        ON DUPLICATE KEY UPDATE
+        measurements = VALUES(measurements),
+        prices = VALUES(prices),
+        customer_name = VALUES(customer_name),
+        school_id = VALUES(school_id),
+        outlet_id = VALUES(outlet_id),
+        created_at = NOW(),
+        created_by = VALUES(created_by)");
+
+    $stmt->execute([
+        $bill_number,
+        $fiscal_year,
+        $school_id,
+        $outlet_id_current,
+        $customer_name,
+        $measurements_json,
+        $prices_json,
+        $printed_by
+    ]);
+}
+
 
     // Save advance payment (unchanged)
     $pdo->prepare("INSERT INTO advance_payment 
