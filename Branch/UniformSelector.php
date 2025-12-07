@@ -48,6 +48,9 @@ class UniformSelector {
                 $brandCount[$name] = [];
             }
 
+            $rawPrice = str_replace(',', '', trim($row['price'] ?? '0')); // remove commas
+            $price = is_numeric($rawPrice) ? (float)$rawPrice : 0;
+
             $items[$name][] = [
                 'size'     => $size,           // e.g., "21,22,23" or "32"
                 'price'    => (float)$row['price'],
