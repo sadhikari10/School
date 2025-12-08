@@ -33,7 +33,6 @@ if (isset($_GET['done']) && $_GET['done'] != '') {
 </head>
 <body>
 
-<a href="dashboard.php" class="btn btn-dark btn-lg shadow back-btn">Dashboard</a>
 
 <div class="container mt-5 pt-4">
     <h1 class="text-primary mb-4">Pending Uniform Orders</h1>
