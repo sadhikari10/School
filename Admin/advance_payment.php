@@ -168,6 +168,11 @@ $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
     <?php endif; ?>
 
     <a href="dashboard.php" class="back-btn">Back to Dashboard</a>
+    <a href="export_excel.php?report=advance<?php echo !empty($_SERVER['QUERY_STRING']) ? '&'.htmlspecialchars($_SERVER['QUERY_STRING']) : ''; ?>" 
+        style="background:#e67e22;color:white;padding:12px 30px;border-radius:8px;text-decoration:none;font-weight:bold;margin-left:10px;">
+        Export Advance Payments to Excel
+    </a>
+
 </div>
 </body>
 </html>

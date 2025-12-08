@@ -1,6 +1,6 @@
 {
     "require": {
         "ernilambar/nepali-date": "^1.0",
-        "phpoffice/phpspreadsheet": "1.29"
+        "phpoffice/phpspreadsheet": "1.24.1"
     }
 }

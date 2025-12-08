@@ -79,7 +79,12 @@ $exchanges = $stmt->fetchAll(PDO::FETCH_ASSOC);
         </table>
     <?php endif; ?>
 
-    <div style="text-align:center;">
+    <div style="text-align:center;margin-top:20px;">
+        <a href="export_excel.php?report=exchange<?php echo !empty($_SERVER['QUERY_STRING']) ? '&'.htmlspecialchars($_SERVER['QUERY_STRING']) : ''; ?>" 
+        style="background:#f39c12;color:white;padding:12px 30px;border-radius:8px;text-decoration:none;font-weight:bold;">
+        Export Exchanged Orders to Excel
+        </a>
+        <br><br>
         <a href="dashboard.php" class="back-btn">Back to Dashboard</a>
     </div>
 </div>

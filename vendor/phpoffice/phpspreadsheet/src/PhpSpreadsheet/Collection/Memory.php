@@ -1,6 +1,6 @@
 <?php
 
-namespace PhpOffice\PhpSpreadsheet\Collection\Memory;
+namespace PhpOffice\PhpSpreadsheet\Collection;
 
 use DateInterval;
 use Psr\SimpleCache\CacheInterface;
@@ -11,14 +11,14 @@ use Psr\SimpleCache\CacheInterface;
  * Alternatives implementation should leverage off-memory, non-volatile storage
  * to reduce overall memory usage.
  */
-class SimpleCache3 implements CacheInterface
+class Memory implements CacheInterface
 {
-    /**
-     * @var array Cell Cache
-     */
     private $cache = [];
 
-    public function clear(): bool
+    /**
+     * @return bool
+     */
+    public function clear()
     {
         $this->cache = [];
 
@@ -27,8 +27,10 @@ class SimpleCache3 implements CacheInterface
 
     /**
      * @param string $key
+     *
+     * @return bool
      */
-    public function delete($key): bool
+    public function delete($key)
     {
         unset($this->cache[$key]);
 
@@ -37,8 +39,10 @@ class SimpleCache3 implements CacheInterface
 
     /**
      * @param iterable $keys
+     *
+     * @return bool
      */
-    public function deleteMultiple($keys): bool
+    public function deleteMultiple($keys)
     {
         foreach ($keys as $key) {
             $this->delete($key);
@@ -50,8 +54,10 @@ class SimpleCache3 implements CacheInterface
     /**
      * @param string $key
      * @param mixed  $default
+     *
+     * @return mixed
      */
-    public function get($key, $default = null): mixed
+    public function get($key, $default = null)
     {
         if ($this->has($key)) {
             return $this->cache[$key];
@@ -63,8 +69,10 @@ class SimpleCache3 implements CacheInterface
     /**
      * @param iterable $keys
      * @param mixed    $default
+     *
+     * @return iterable
      */
-    public function getMultiple($keys, $default = null): iterable
+    public function getMultiple($keys, $default = null)
     {
         $results = [];
         foreach ($keys as $key) {
@@ -76,8 +84,10 @@ class SimpleCache3 implements CacheInterface
 
     /**
      * @param string $key
+     *
+     * @return bool
      */
-    public function has($key): bool
+    public function has($key)
     {
         return array_key_exists($key, $this->cache);
     }
@@ -86,8 +96,10 @@ class SimpleCache3 implements CacheInterface
      * @param string                 $key
      * @param mixed                  $value
      * @param null|DateInterval|int $ttl
+     *
+     * @return bool
      */
-    public function set($key, $value, $ttl = null): bool
+    public function set($key, $value, $ttl = null)
     {
         $this->cache[$key] = $value;
 
@@ -97,8 +109,10 @@ class SimpleCache3 implements CacheInterface
     /**
      * @param iterable               $values
      * @param null|DateInterval|int $ttl
+     *
+     * @return bool
      */
-    public function setMultiple($values, $ttl = null): bool
+    public function setMultiple($values, $ttl = null)
     {
         foreach ($values as $key => $value) {
             $this->set($key, $value);
