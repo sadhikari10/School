@@ -108,7 +108,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize_payment'])) 
     <title>Final Bill #<?php echo $bill_number; ?></title>
     <link rel="stylesheet" href="bill.css">
     <style>
-        body { color: #2c3e50; }
+        body { color: #000000; }
         .payment-box { 
             background:#f8f9fa; 
             padding:20px; 
