@@ -19,6 +19,23 @@ body {
     padding-bottom:10px; 
     margin-bottom:15px; 
 }
+/* MAKE ENTIRE BILL BOLD - THERMAL PRINTER STYLE */
+.bill,
+.bill * {
+    font-weight: bold !important;
+}
+
+/* Optional: Slightly larger text for better readability on thermal printers */
+.bill {
+    font-size: 13px !important;
+    line-height: 1.4 !important;
+}
+
+/* Make headers even stronger */
+.header h1 {
+    font-size: 20px !important;
+    letter-spacing: 1px;
+}
 .header h1 { font-size:18px; font-weight:bold; margin-bottom:5px; }
 .header p { font-size:11px; margin:2px 0; }
 .info { font-size:11px; margin:8px 0; }
