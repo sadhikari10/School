@@ -1,6 +1,10 @@
 <?php
 session_start();
 require '../Common/connection.php';
+require '../vendor/autoload.php'; // Make sure PhpSpreadsheet is installed
+
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin' || !isset($_SESSION['selected_outlet_id'])) {
     header("Location: index.php");
@@ -10,7 +14,72 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin' || !isset($_SESSI
 $outlet_id   = $_SESSION['selected_outlet_id'];
 $outlet_name = $_SESSION['selected_outlet_name'];
 
-// Get returns + real username from 'login' table
+// =============================================
+// EXCEL EXPORT LOGIC
+// =============================================
+if (isset($_GET['export']) && $_GET['export'] === 'excel') {
+
+    $stmt = $pdo->prepare("
+        SELECT rel.*,
+               COALESCE(l.username, 'Unknown User') AS logged_by_name
+        FROM return_exchange_log rel
+        LEFT JOIN login l ON rel.user_id = l.id
+        WHERE rel.outlet_id = ? AND rel.action = 'returned'
+        ORDER BY rel.logged_datetime DESC
+    ");
+    $stmt->execute([$outlet_id]);
+    $returns = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $spreadsheet = new Spreadsheet();
+    $sheet = $spreadsheet->getActiveSheet();
+    $sheet->setTitle('Returned Orders');
+
+    // Headers
+    $headers = ['S.N', 'Log ID', 'Bill ID', 'Reason', 'Amt Returned by Customer', 'Amt Refunded to Customer', 'Logged By', 'Date & Time'];
+    $col = 'A';
+    foreach ($headers as $h) {
+        $sheet->setCellValue($col++ . '1', $h);
+    }
+
+    // Style header
+    $headerRange = 'A1:' . $col . '1';
+    $sheet->getStyle($headerRange)->getFont()->setBold(true)->setSize(12);
+    $sheet->getStyle($headerRange)->getFill()
+        ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+        ->getStartColor()->setARGB('FF8E44AD');
+
+    // Fill data
+    $row = 2;
+    foreach ($returns as $i => $r) {
+        $sheet->setCellValue('A' . $row, $i + 1);
+        $sheet->setCellValue('B' . $row, $r['id']);
+        $sheet->setCellValue('C' . $row, $r['bill_id']);
+        $sheet->setCellValue('D' . $row, $r['reason'] ?: '-');
+        $sheet->setCellValue('E' . $row, number_format($r['amount_returned_by_customer'], 2));
+        $sheet->setCellValue('F' . $row, number_format($r['amount_returned_to_customer'], 2));
+        $sheet->setCellValue('G' . $row, $r['logged_by_name']);
+        $sheet->setCellValue('H' . $row, date('d-m-Y H:i', strtotime($r['logged_datetime'])));
+        $row++;
+    }
+
+    // Auto-size columns
+    foreach (range('A', 'H') as $col) {
+        $sheet->getColumnDimension($col)->setAutoSize(true);
+    }
+
+    // Download
+    $filename = "Returned_Orders_" . date('Y-m-d') . ".xlsx";
+    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Cache-Control: max-age=0');
+    $writer = new Xlsx($spreadsheet);
+    $writer->save('php://output');
+    exit;
+}
+
+// =============================================
+// NORMAL DISPLAY LOGIC
+// =============================================
 $stmt = $pdo->prepare("
     SELECT rel.*,
            COALESCE(l.username, 'Unknown User') AS logged_by_name
@@ -39,8 +108,10 @@ $returns = $stmt->fetchAll(PDO::FETCH_ASSOC);
         th{background:#8e44ad;color:white;font-weight:600;}
         tr:hover{background:#f8f1ff;}
         .no-data{text-align:center;padding:40px;font-size:1.3rem;color:#7f8c8d;}
-        .back-btn{display:inline-block;margin-top:30px;padding:12px 35px;background:#8e44ad;color:white;border-radius:50px;text-decoration:none;font-weight:600;}
-        .back-btn:hover{background:#732d91;transform:scale(1.05);}
+        .btn{display:inline-block;margin:15px 10px;padding:12px 32px;background:#e74c3c;color:white;border-radius:50px;text-decoration:none;font-weight:600;font-size:1rem;}
+        .btn:hover{background:#c0392b;transform:scale(1.05);}
+        .btn-back{background:#8e44ad;}
+        .btn-back:hover{background:#732d91;}
         .amount{text-align:right;font-weight:600;}
     </style>
 </head>
@@ -79,13 +150,12 @@ $returns = $stmt->fetchAll(PDO::FETCH_ASSOC);
         </table>
     <?php endif; ?>
 
-    <div style="text-align:center;margin-top:20px;">
-        <a href="export_excel.php?report=return<?php echo !empty($_SERVER['QUERY_STRING']) ? '&'.htmlspecialchars($_SERVER['QUERY_STRING']) : ''; ?>" 
-        style="background:#e74c3c;color:white;padding:12px 30px;border-radius:8px;text-decoration:none;font-weight:bold;">
-        Export Returned Orders to Excel
+    <div style="text-align:center;">
+        <a href="order_return.php?export=excel" class="btn">
+            Export to Excel
         </a>
-        <br><br>
-        <a href="dashboard.php" class="back-btn">Back to Dashboard</a>
+        <a href="dashboard.php" class="btn btn-back">Back to Dashboard</a>
     </div>
+</div>
 </body>
 </html>
