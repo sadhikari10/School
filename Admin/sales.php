@@ -2,7 +2,7 @@
 session_start();
 require '../Common/connection.php';
 require '../Common/nepali_date.php';
-require '../vendor/autoload.php';  // <-- Make sure PhpSpreadsheet is installed
+require '../vendor/autoload.php';
 
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
@@ -16,12 +16,12 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin' || !isset($_SESSI
 $outlet_id   = $_SESSION['selected_outlet_id'];
 $outlet_name = $_SESSION['selected_outlet_name'] ?? 'Unknown Outlet';
 
-// ============= EXCEL EXPORT LOGIC =============
+// ============= EXCEL EXPORT: ONE SHEET WITH SALES + ITEM SUMMARY BELOW =============
 if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $params = [$outlet_id];
     $where  = ["outlet_id = ?"];
 
-    // Apply same filters as display
+    // Apply same filters as web page
     if (!empty($_GET['fiscal_year'])) { $where[] = "fiscal_year = ?"; $params[] = $_GET['fiscal_year']; }
     if (!empty($_GET['school_name'])) { $where[] = "school_name LIKE ?"; $params[] = "%{$_GET['school_name']}%"; }
     if (!empty($_GET['customer_name'])) { $where[] = "customer_name LIKE ?"; $params[] = "%{$_GET['customer_name']}%"; }
@@ -29,7 +29,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     if (!empty($_GET['printed_by'])) { $where[] = "printed_by LIKE ?"; $params[] = "%{$_GET['printed_by']}%"; }
     if (!empty($_GET['bill_number'])) { $where[] = "bill_number LIKE ?"; $params[] = "%{$_GET['bill_number']}%"; }
 
-    // Date filter
+    // Date filter (same as normal view)
     if (!empty($_GET['start_date']) && !empty($_GET['end_date'])) {
         $where[] = "bs_datetime BETWEEN ? AND ?";
         $params[] = $_GET['start_date'] . ' 00:00:00';
@@ -52,7 +52,29 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $stmt->execute($params);
     $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Create Spreadsheet
+    // ============ BUILD ITEM SUMMARY (from filtered data only) ============
+    $itemSummary = [];
+    foreach ($sales as $s) {
+        $items = json_decode($s['items_json'], true) ?? [];
+        foreach ($items as $it) {
+            $name = trim($it['name']);
+            $size = trim($it['size'] ?? '');
+            $key  = $name . ($size ? " ($size)" : "");
+
+            $qty   = (int)$it['quantity'];
+            $price = (float)$it['price']; // total line amount
+
+            if (!isset($itemSummary[$key])) {
+                $itemSummary[$key] = ['qty' => 0, 'amount' => 0.0, 'bills' => 0];
+            }
+            $itemSummary[$key]['qty']    += $qty;
+            $itemSummary[$key]['amount'] += $price;
+            $itemSummary[$key]['bills']  += 1;
+        }
+    }
+    uasort($itemSummary, fn($a, $b) => $b['amount'] <=> $a['amount']); // sort by revenue
+
+    // ============ CREATE SPREADSHEET (ONE SHEET ONLY) ============
     $spreadsheet = new Spreadsheet();
     $sheet = $spreadsheet->getActiveSheet();
     $sheet->setTitle('Sales Report');
@@ -63,18 +85,18 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     foreach ($headers as $h) $sheet->setCellValue($col++ . '1', $h);
 
     // Style header
-    $sheet->getStyle('A1:' . $col . '1')->getFont()->setBold(true)->setSize(12);
-    $sheet->getStyle('A1:' . $col . '1')->getFill()
+    $sheet->getStyle('A1:J1')->getFont()->setBold(true)->setSize(12);
+    $sheet->getStyle('A1:J1')->getFill()
         ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
         ->getStartColor()->setARGB('FF8E44AD');
 
-    // Fill data
+    // Fill sales data
     $row = 2; $sn = 1;
     foreach ($sales as $s) {
         $items = json_decode($s['items_json'], true) ?? [];
         $itemsText = '';
         foreach ($items as $it) {
-            $itemsText .= $it['name'] . ' (' . ($it['size'] ?? '') . ') ×' . $it['quantity'] . ' ->' . number_format($it['price'],2) . "\n";
+            $itemsText .= $it['name'] . ' (' . ($it['size'] ?? '') . ') ×' . $it['quantity'] . ' -> ' . number_format($it['price'],2) . "\n";
         }
 
         $sheet->setCellValue('A' . $row, $sn++);
@@ -91,16 +113,54 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
         $row++;
     }
 
-    // Grand Total
+    // Grand Total for sales
     $sheet->setCellValue('E' . $row, 'GRAND TOTAL');
     $sheet->setCellValue('F' . $row, '=SUM(F2:F' . ($row-1) . ')');
     $sheet->getStyle('E' . $row . ':F' . $row)->getFont()->setBold(true)->setSize(13);
+    $row += 2; // leave one blank row
 
-    // Auto-size columns
+    // ============ ITEM SUMMARY BELOW SALES ============
+    $sheet->setCellValue('A' . $row, 'ITEM-WISE SALES SUMMARY');
+    $sheet->getStyle('A' . $row)->getFont()->setBold(true)->setSize(14)->getColor()->setARGB('FF27ae60');
+    $sheet->mergeCells('A' . $row . ':J' . $row);
+    $row++;
+
+    // Summary headers
+    $sheet->setCellValue('A' . $row, 'Item Name');
+    $sheet->setCellValue('B' . $row, 'Appeared In (Bills)');
+    $sheet->setCellValue('C' . $row, 'Total Quantity');
+    $sheet->setCellValue('D' . $row, 'Total Revenue');
+    $sheet->getStyle('A' . $row . ':D' . $row)->getFont()->setBold(true)->setSize(12);
+    $sheet->getStyle('A' . $row . ':D' . $row)->getFill()
+        ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+        ->getStartColor()->setARGB('FF27ae60');
+    $row++;
+
+    foreach ($itemSummary as $itemName => $data) {
+        $sheet->setCellValue('A' . $row, $itemName);
+        $sheet->setCellValue('B' . $row, $data['bills']);
+        $sheet->setCellValue('C' . $row, $data['qty']);
+        $sheet->setCellValue('D' . $row, $data['amount']);
+        $sheet->getStyle('D' . $row)->getNumberFormat()->setFormatCode('#,##0.00');
+        $row++;
+    }
+
+    // Grand total for summary
+    $sheet->setCellValue('A' . $row, 'SUMMARY TOTAL');
+    $sheet->setCellValue('B' . $row, '=SUM(B' . ($row - count($itemSummary)) . ':B' . ($row-1) . ')');
+    $sheet->setCellValue('C' . $row, '=SUM(C' . ($row - count($itemSummary)) . ':C' . ($row-1) . ')');
+    $sheet->setCellValue('D' . $row, '=SUM(D' . ($row - count($itemSummary)) . ':D' . ($row-1) . ')');
+    $sheet->getStyle('A' . $row . ':D' . $row)
+        ->getFont()->setBold(true)->setSize(13)->getColor()->setARGB('FFFFFFFF');
+    $sheet->getStyle('A' . $row . ':D' . $row)->getFill()
+        ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+        ->getStartColor()->setARGB('FF2c3e50');
+
+    // Auto-size all columns
     foreach (range('A', 'J') as $c) $sheet->getColumnDimension($c)->setAutoSize(true);
 
     // Download
-    $filename = "Sales_Report_" . date('Y-m-d') . ".xlsx";
+    $filename = "Sales_Report_" . $outlet_name . "_" . date('Y-m-d') . ".xlsx";
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     header('Content-Disposition: attachment; filename="' . $filename . '"');
     header('Cache-Control: max-age=0');
@@ -109,7 +169,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     exit;
 }
 
-// ============= NORMAL DISPLAY LOGIC (same as before) =============
+// ============= NORMAL WEB DISPLAY (UNCHANGED) =============
 $params = [$outlet_id];
 $where  = [];
 
@@ -185,10 +245,9 @@ $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
     </form>
 
     <div class="actions">
-        <a href="sales.php?export=excel<?php 
-            echo !empty($_SERVER['QUERY_STRING']) ? '&' . htmlentities($_SERVER['QUERY_STRING']) : ''; 
-        ?>" class="btn btn-excel">
-            <i class="fas fa-file-excel"></i> Export to Excel
+        <a href="sales.php?export=excel<?php echo !empty($_SERVER['QUERY_STRING']) ? '&' . htmlentities($_SERVER['QUERY_STRING']) : ''; ?>" 
+           class="btn btn-excel">
+            Export to Excel
         </a>
         <a href="dashboard.php" class="btn btn-back">Back to Dashboard</a>
     </div>
