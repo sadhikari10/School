@@ -153,17 +153,19 @@ class MeasurementHelper
     ?>
     <div class="modal" id="measurementModal">
         <div class="modal-content">
-            <div class="modal-header">
-                <div style="display:flex;align-items:center;gap:15px;flex:1;">
-                    <h3 style="margin:0; font-size:24px;">Take Measurement</h3>
-                </div>
-                <button type="button" 
-        class="back-btn-modal" 
-        onclick="closeMeasurementModal()" 
-        style="background:#e74c3c; color:white; padding:10px 20px; border:none; border-radius:8px; font-weight:bold; font-size:15px;">
-     Back
-</button>
-            </div>
+            <div class="modal-header" 
+     style="display:flex; justify-content:space-between; align-items:center; padding:15px 20px; border-bottom:1px solid #ddd;">
+
+    <h3 style="margin:0; font-size:24px; color:#2c3e50;">Take Measurement</h3>
+
+    <button type="button"
+            onclick="closeMeasurementModal()"
+            style="background:#6c5ce7; color:white; padding:10px 20px; border:none; border-radius:8px; font-weight:bold; font-size:15px; cursor:pointer;">
+        Back
+    </button>
+
+</div>
+
 
             <div style="padding:20px;">
                 <input type="text" id="measItemName" placeholder="Item name (e.g. Full Suit, Blazer, Pant)" 
