@@ -692,6 +692,18 @@ function openMeasurementModal() {
     const inputs = container.querySelectorAll('input');
     inputs.forEach(input => input.value = '');
 }
+
+// This function closes the measurement popup
+function closeMeasurementModal() {
+    document.getElementById('measurementModal').style.display = 'none';
+}
+
+// Optional: Close when clicking outside the white box (very nice touch)
+document.getElementById('measurementModal').addEventListener('click', function(e) {
+    if (e.target === this) {
+        closeMeasurementModal();
+    }
+});
 </script>
 </body>
 </html>

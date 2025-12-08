@@ -157,7 +157,12 @@ class MeasurementHelper
                 <div style="display:flex;align-items:center;gap:15px;flex:1;">
                     <h3 style="margin:0; font-size:24px;">Take Measurement</h3>
                 </div>
-                <button type="button" class="back-btn-modal" onclick="closeMeasurementModal()">Back</button>
+                <button type="button" 
+        class="back-btn-modal" 
+        onclick="closeMeasurementModal()" 
+        style="background:#e74c3c; color:white; padding:10px 20px; border:none; border-radius:8px; font-weight:bold; font-size:15px;">
+     Back
+</button>
             </div>
 
             <div style="padding:20px;">
