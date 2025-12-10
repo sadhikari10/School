@@ -180,7 +180,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize_payment'])) 
     <div class="info"><strong>Bill No:</strong> <?php echo $bill_number; ?></div>
     <div class="info"><strong>Date:</strong> <?php echo $bs_datetime; ?></div>
     <div class="info"><strong>Customer:</strong> <?php echo htmlspecialchars($customer_name); ?></div>
-
+    <!-- NEW: Show School Name if exists -->
+    <?php if (!empty(trim($school_name))): ?>
+    <div class="info"><strong>School:</strong> <?php echo htmlspecialchars($school_name); ?></div>
+    <?php endif; ?>
     <table>
         <thead>
             <tr><th>S.N</th><th>Item</th><th>Size</th><th>Qty</th><th>Amount</th></tr>
