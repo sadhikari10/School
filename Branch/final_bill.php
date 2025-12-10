@@ -172,7 +172,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize_payment'])) 
     <div class="header">
         <h1><?php echo htmlspecialchars($shop_name); ?></h1>
         <?php if ($phone_display !== 'N/A'): ?>
-            <p>Phone: <?php echo htmlspecialchars($phone_display); ?></p>
+            <p>Phone: 01-<?php echo htmlspecialchars($phone_display); ?></p>
         <?php endif; ?>
         <p><?php echo htmlspecialchars($branch_display); ?></p>
     </div>

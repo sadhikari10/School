@@ -443,7 +443,7 @@ if (isset($_POST['start_new_bill'])) {
 <div class="bill" id="printableBill">
     <div class="header">
         <h1><?php echo htmlspecialchars($shop_name); ?></h1>
-        <p>Phone: <?php echo htmlspecialchars($phone_number); ?></p>
+        <p>Phone: 01-<?php echo htmlspecialchars($phone_number); ?></p>
         <p><?php echo htmlspecialchars($location); ?></p>
     </div>
     <div class="info"><strong>Bill No:</strong> <?php echo $bill_number; ?></div>
