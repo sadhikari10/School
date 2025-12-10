@@ -212,10 +212,13 @@ tr:hover { background:#f8f9ff; }
                                 <input type="number" name="price" class="price-input" step="0.01" min="0" value="<?php echo $row['price'] ?? ''; ?>">
                         </td>
                         <td data-label="Brand">
-                            <select name="brand_id">
-                                <option value="">-- None --</option>
+                            <select name="brand_id" required>
+                                <option value="" disabled <?php echo empty($row_brand_id) ? 'selected' : ''; ?>>
+                                    -- Select Brand --
+                                </option>
                                 <?php foreach($brands as $brand): ?>
-                                    <option value="<?php echo $brand['brand_id']; ?>" <?php echo ($brand['brand_id']==$row_brand_id)?'selected':''; ?>>
+                                    <option value="<?php echo $brand['brand_id']; ?>"
+                                        <?php echo ($brand['brand_id'] == $row_brand_id) ? 'selected' : ''; ?>>
                                         <?php echo htmlspecialchars($brand['brand_name']); ?>
                                     </option>
                                 <?php endforeach; ?>

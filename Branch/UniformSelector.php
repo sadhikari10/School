@@ -35,7 +35,11 @@ class UniformSelector {
 
         $items = [];
         $brandCount = [];
-        $brandNames = [1 => 'Nepali', 2 => 'Indian'];
+
+        // ONLY CHANGE: Load brand names from database instead of hardcoding
+        $brandStmt = $this->pdo->prepare("SELECT brand_id, brand_name FROM brands WHERE outlet_id = ?");
+        $brandStmt->execute([$this->outlet_id]);
+        $brandNames = $brandStmt->fetchAll(PDO::FETCH_KEY_PAIR); // This gives real names
 
         foreach ($rows as $row) {
             $name = trim($row['item_name']);
@@ -48,11 +52,11 @@ class UniformSelector {
                 $brandCount[$name] = [];
             }
 
-            $rawPrice = str_replace(',', '', trim($row['price'] ?? '0')); // remove commas
+            $rawPrice = str_replace(',', '', trim($row['price'] ?? '0'));
             $price = is_numeric($rawPrice) ? (float)$rawPrice : 0;
 
             $items[$name][] = [
-                'size'     => $size,           // e.g., "21,22,23" or "32"
+                'size'     => $size,
                 'price'    => (float)$row['price'],
                 'brand'    => $brandName,
                 'brand_id' => $brandId
