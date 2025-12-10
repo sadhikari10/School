@@ -248,11 +248,12 @@ if (!empty($customItems)) {
         // Save item name + price + qty in the new table
         $pdo->prepare("
             INSERT INTO custom_measurement_items 
-                (bill_number, fiscal_year, item_index, item_name, price, quantity)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (bill_number, fiscal_year, outlet_id, item_index, item_name, price, quantity)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         ")->execute([
             $bill_number,
             $fiscal_year,
+            $outlet_id,  // ← This is the key line
             $itemIndex,
             $cleanName,
             (float)($item['price'] ?? 0),
