@@ -76,7 +76,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
         $items = json_decode($p['items_json'], true) ?? [];
         $itemsText = '';
         foreach ($items as $it) {
-            $itemsText .= $it['name'] . ' (' . ($it['size'] ?? '') . ') ×' . $it['quantity'] . ' @' . number_format($it['price'], 2) . "\n";
+            $itemsText .= $it['name'] . ' (' . ($it['size'] ?? '') . ') ×' . $it['quantity'] . ' ->' . number_format($it['price'], 2) . "\n";
         }
 
         $sheet->setCellValue('A' . $row, $i + 1);
@@ -236,7 +236,7 @@ $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         <?php if($items): ?>
                             <ul class="items-list">
                                 <?php foreach($items as $it): ?>
-                                    <li><?=htmlspecialchars($it['name'])?> (<?=htmlspecialchars($it['size']??'')?>) × <?=$it['quantity']?> @ <?=number_format($it['price'],2)?></li>
+                                    <li><?=htmlspecialchars($it['name'])?> (<?=htmlspecialchars($it['size']??'')?>) × <?=$it['quantity']?> -> <?=number_format($it['price'],2)?></li>
                                 <?php endforeach; ?>
                             </ul>
                         <?php else: echo '-'; endif; ?>

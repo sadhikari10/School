@@ -15,20 +15,32 @@ $outlet_id   = $_SESSION['selected_outlet_id'];
 $outlet_name = $_SESSION['selected_outlet_name'];
 
 // =============================================
-// EXCEL EXPORT LOGIC
+// FETCH DATA + CALCULATE TOTALS
+// =============================================
+$stmt = $pdo->prepare("
+    SELECT rel.*,
+           COALESCE(l.username, 'Unknown User') AS logged_by_name
+    FROM return_exchange_log rel
+    LEFT JOIN login l ON rel.user_id = l.id
+    WHERE rel.outlet_id = ? AND rel.action = 'exchanged'
+    ORDER BY rel.logged_datetime DESC
+");
+$stmt->execute([$outlet_id]);
+$exchanges = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Calculate totals
+$total_paid     = 0;
+$total_received = 0;
+
+foreach ($exchanges as $e) {
+    $total_paid     += (float)$e['amount_returned_by_customer'];
+    $total_received += (float)$e['amount_returned_to_customer'];
+}
+
+// =============================================
+// EXCEL EXPORT LOGIC (with totals)
 // =============================================
 if (isset($_GET['export']) && $_GET['export'] === 'excel') {
-
-    $stmt = $pdo->prepare("
-        SELECT rel.*,
-               COALESCE(l.username, 'Unknown User') AS logged_by_name
-        FROM return_exchange_log rel
-        LEFT JOIN login l ON rel.user_id = l.id
-        WHERE rel.outlet_id = ? AND rel.action = 'exchanged'
-        ORDER BY rel.logged_datetime DESC
-    ");
-    $stmt->execute([$outlet_id]);
-    $exchanges = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     $spreadsheet = new Spreadsheet();
     $sheet = $spreadsheet->getActiveSheet();
@@ -66,12 +78,25 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
         $row++;
     }
 
+    // === TOTALS ROW in Excel ===
+    $sheet->setCellValue('D' . $row, 'TOTAL');
+    $sheet->setCellValue('E' . $row, number_format($total_paid, 2));
+    $sheet->setCellValue('F' . $row, number_format($total_received, 2));
+
+    // Style totals row
+    $totalStyle = 'D' . $row . ':H' . $row;
+    $sheet->getStyle($totalStyle)->getFont()->setBold(true)->setSize(12);
+    $sheet->getStyle($totalStyle)->getFill()
+        ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+        ->getStartColor()->setARGB('FFE8F5E8');
+    $sheet->getStyle('E' . $row . ':F' . $row)->getFont()->getColor()->setARGB('FF27AE60');
+
     // Auto-size columns
     foreach (range('A', 'H') as $c) {
         $sheet->getColumnDimension($c)->setAutoSize(true);
     }
 
-    // Download file
+    // Download
     $filename = "Exchanged_Orders_" . date('Y-m-d') . ".xlsx";
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     header('Content-Disposition: attachment; filename="' . $filename . '"');
@@ -80,20 +105,6 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $writer->save('php://output');
     exit;
 }
-
-// =============================================
-// NORMAL PAGE DISPLAY
-// =============================================
-$stmt = $pdo->prepare("
-    SELECT rel.*,
-           COALESCE(l.username, 'Unknown User') AS logged_by_name
-    FROM return_exchange_log rel
-    LEFT JOIN login l ON rel.user_id = l.id
-    WHERE rel.outlet_id = ? AND rel.action = 'exchanged'
-    ORDER BY rel.logged_datetime DESC
-");
-$stmt->execute([$outlet_id]);
-$exchanges = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 
 <!DOCTYPE html>
@@ -118,6 +129,12 @@ $exchanges = $stmt->fetchAll(PDO::FETCH_ASSOC);
         .btn-back{background:#8e44ad;}
         .btn-back:hover{background:#732d91;}
         .amount{text-align:right;font-weight:600;}
+        .total-row td{
+            background:#e8f5e8 !important;
+            font-weight:bold;
+            font-size:1.1rem;
+            color:#27ae60;
+        }
     </style>
 </head>
 <body>
@@ -151,6 +168,14 @@ $exchanges = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <td><?php echo date('d-m-Y H:i', strtotime($row['logged_datetime'])); ?></td>
                 </tr>
                 <?php endforeach; ?>
+
+                <!-- TOTALS ROW -->
+                <tr class="total-row">
+                    <td colspan="3" style="text-align:right;"><strong>TOTAL</strong></td>
+                    <td class="amount"><strong><?php echo number_format($total_paid, 2); ?></strong></td>
+                    <td class="amount"><strong><?php echo number_format($total_received, 2); ?></strong></td>
+                    <td colspan="2"></td>
+                </tr>
             </tbody>
         </table>
     <?php endif; ?>
