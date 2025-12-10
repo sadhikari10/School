@@ -15,14 +15,16 @@ if (isset($_POST['add_item'])) {
     $item_name = trim($_POST['item_name']);
 
     if ($item_name) {
-        $check = $pdo->prepare("SELECT 1 FROM items WHERE LOWER(item_name) = LOWER(?) AND outlet_id = ?");
-        $check->execute([$item_name, $outlet_id]);
-        if ($check->fetch()) {
-            $_SESSION['error'] = "Item '$item_name' already exists!";
-        } else {
+        try {
             $stmt = $pdo->prepare("INSERT INTO items (item_name, outlet_id) VALUES (?, ?)");
             $stmt->execute([$item_name, $outlet_id]);
-            $_SESSION['success'] = "Item and sizes added!";
+            $_SESSION['success'] = "Item '$item_name' added successfully!";
+        } catch (PDOException $e) {
+            if ($e->getCode() == '23000') {  // Duplicate entry
+                $_SESSION['error'] = "Item '$item_name' already exists in this outlet!";
+            } else {
+                $_SESSION['error'] = "An error occurred. Please try again.";
+            }
         }
     } else {
         $_SESSION['error'] = "Please fill both fields!";

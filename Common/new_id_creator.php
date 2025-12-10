@@ -2,13 +2,13 @@
 require '../Common/connection.php';   // adjust path if needed
 
 // === New Admin User Details ===
-$username       = 'Ganesh Limbu';
-$email          = 'everestschooluniform@gmail.com';
-$phone_number   = '9851161831';
+$username       = 'Test Test';
+$email          = 'test@gmail.com';
+$phone_number   = '9840000000';
 $shop_name      = 'Everest Clothe Store Pvt Ltd';   // ← Correct column name
-$plain_password = 'Ganesh@123';
-$role           = 'admin';
-$outlet_id      = 1;//null
+$plain_password = 'Test@123';
+$role           = 'staff';
+$outlet_id      = 2;//null
 
 // Secure password hash
 $hashed_password = password_hash($plain_password, PASSWORD_BCRYPT);

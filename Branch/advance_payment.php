@@ -47,23 +47,29 @@ $search_bill = trim($_GET['bill'] ?? '');
 $search_customer = trim($_GET['customer'] ?? '');
 $search_date = trim($_GET['date'] ?? '');
 
-$sql = "SELECT * FROM advance_payment WHERE status = 'unpaid'";
-$params = [];
+// Get current staff's outlet
+$outlet_id = $_SESSION['outlet_id'] ?? 0;
+
+$sql = "SELECT ap.*, o.location AS branch_name 
+        FROM advance_payment ap 
+        LEFT JOIN outlets o ON ap.outlet_id = o.outlet_id 
+        WHERE ap.status = 'unpaid' AND ap.outlet_id = ?";
+$params = [$outlet_id];
 
 if ($search_bill !== '') {
-    $sql .= " AND bill_number LIKE ?";
+    $sql .= " AND ap.bill_number LIKE ?";
     $params[] = '%' . $search_bill . '%';
 }
 if ($search_customer !== '') {
-    $sql .= " AND customer_name LIKE ?";
+    $sql .= " AND ap.customer_name LIKE ?";
     $params[] = '%' . $search_customer . '%';
 }
 if ($search_date !== '') {
-    $sql .= " AND bs_datetime LIKE ?";
+    $sql .= " AND ap.bs_datetime LIKE ?";
     $params[] = $search_date . '%';
 }
 
-$sql .= " ORDER BY id DESC";
+$sql .= " ORDER BY ap.id DESC";
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $advances = $stmt->fetchAll(PDO::FETCH_ASSOC);
