@@ -34,33 +34,37 @@ $search_bill     = trim($_GET['bill'] ?? '');
 $search_customer = trim($_GET['customer'] ?? '');
 $search_date     = trim($_GET['date'] ?? '');
 
-$sql = "SELECT 
-            bill_number,
-            customer_name,
-            school_name,
-            total,
-            payment_method,
-            bs_datetime
-        FROM sales 
-        WHERE printed_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-          AND exchange_status = 'original'";
+// Get the current user's outlet (staff only, admin can see all or handle separately if needed)
+$outlet_id = $_SESSION['outlet_id'] ?? 0;
 
-$params = [];
+$sql = "SELECT 
+            s.bill_number,
+            s.customer_name,
+            s.school_name,
+            s.total,
+            s.payment_method,
+            s.bs_datetime
+        FROM sales s
+        WHERE s.printed_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+          AND s.exchange_status = 'original'
+          AND s.outlet_id = ?";
+
+$params = [$outlet_id];
 
 if ($search_bill !== '') {
-    $sql .= " AND bill_number LIKE ?";
+    $sql .= " AND s.bill_number LIKE ?";
     $params[] = "%$search_bill%";
 }
 if ($search_customer !== '') {
-    $sql .= " AND customer_name LIKE ?";
+    $sql .= " AND s.customer_name LIKE ?";
     $params[] = "%$search_customer%";
 }
 if ($search_date !== '') {
-    $sql .= " AND bs_datetime LIKE ?";
+    $sql .= " AND s.bs_datetime LIKE ?";
     $params[] = "$search_date%";
 }
 
-$sql .= " ORDER BY printed_at DESC";
+$sql .= " ORDER BY s.printed_at DESC";
 
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);

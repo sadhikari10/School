@@ -113,10 +113,10 @@ if (isset($_POST['select_school'])) {
                 <?php endif; ?>
 
                 <!-- Always show "Other" option -->
-                <div class="school-card other-card" 
+                <!-- <div class="school-card other-card" 
                      onclick="selectSchool(0, 'Other', this)">
                     <div class="school-name">Other</div>
-                </div>
+                </div> -->
             </div>
 
             <div style="margin-top:40px; text-align:center;">
