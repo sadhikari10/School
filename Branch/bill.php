@@ -214,7 +214,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_save_advance']))
     $customer_name   = trim($_POST['customer_name'] ?? '');
     $advance_amount  = (float)($_POST['advance_payment'] ?? 0);
     $payment_method  = $_POST['payment_method'] === 'online' ? 'online' : 'cash';
-    $school_name     = $_SESSION['temp_school_name'] ?? '';
+    $school_name = $_SESSION['temp_school_name'] ?? $_SESSION['selected_school_name'] ?? '';
 
     if ($advance_amount <= 0 || empty($detailed_items)) {
         echo json_encode(['success' => false, 'error' => 'Invalid advance amount']);
@@ -329,8 +329,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
 
     $customer_name  = trim($_POST['customer_name'] ?? '');
     $payment_method = $_POST['payment_method'] === 'online' ? 'online' : 'cash';
-    $school_name    = $_SESSION['temp_school_name'] ?? '';
-
+    $school_name = $_SESSION['temp_school_name'] ?? $_SESSION['selected_school_name'] ?? '';
     if (empty($detailed_items)) {
         echo json_encode(['success' => false, 'error' => 'No items']);
         exit;
