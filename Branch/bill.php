@@ -2,6 +2,9 @@
 // bill.php - ONLY BILL NUMBER LOGIC FIXED (everything else 100% original)
 session_start();
 ob_start();
+// ADD THIS:
+header('Content-Type: text/html; charset=utf-8');  // prevents accidental JSON header too early
+ob_clean();
 require '../Common/connection.php';
 require '../Common/nepali_date.php';
 
@@ -317,11 +320,12 @@ if (!empty($customItems)) {
     exit;
 
 }
-
 // ————————————————————————————————————————
-// AJAX: Mark as PAID → Save measurements + school_id + outlet_id
+// AJAX: Mark as PAID – FINAL FIXED VERSION
 // ————————————————————————————————————————
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
+    ob_clean(); // ← crucial
+
     if ($is_advance_saved) {
         echo json_encode(['success' => false, 'error' => 'Bill already saved as ADVANCE!']);
         exit;
@@ -329,81 +333,109 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
 
     $customer_name  = trim($_POST['customer_name'] ?? '');
     $payment_method = $_POST['payment_method'] === 'online' ? 'online' : 'cash';
-    $school_name = $_SESSION['temp_school_name'] ?? $_SESSION['selected_school_name'] ?? '';
+    $school_name    = $_SESSION['temp_school_name'] ?? $_SESSION['selected_school_name'] ?? '';
+
     if (empty($detailed_items)) {
         echo json_encode(['success' => false, 'error' => 'No items']);
         exit;
     }
 
-    // Increment bill number
-    $final_bill_number = incrementBillCounter($pdo, $outlet_id, $fiscal_year);
-    $bill_number = $final_bill_number;
-    $_SESSION['current_bill_number'] = $bill_number;
+    try {
+        $final_bill_number = incrementBillCounter($pdo, $outlet_id, $fiscal_year);
+        $bill_number = $final_bill_number;
+        $_SESSION['current_bill_number'] = $bill_number;
 
-    // ——————— SAVE CUSTOM MEASUREMENTS (with school_id & outlet_id) ———————
-    require_once 'MeasurementHelper.php';
-    $measHelper = new MeasurementHelper($pdo);
-    $customItems = $measHelper->getItems();
+        // ——————— CUSTOM MEASUREMENTS (exact same as advance) ———————
+        require_once 'MeasurementHelper.php';
+        $measHelper  = new MeasurementHelper($pdo);
+        $customItems = $measHelper->getItems();
 
-    if (!empty($customItems)) {
-        $measurements = [];
-        $prices = [];
+        if (!empty($customItems)) {
+            $measurements = [];
+            $prices       = [];
 
-        foreach ($customItems as $item) {
-            $clean_name = preg_replace('/\s*\(Custom Made\)$/i', '', $item['name']);
-            $measurements[$clean_name] = $item['measurements'];
-            $prices[$clean_name] = $item['price'] * $item['quantity'];
+            $pdo->prepare("DELETE FROM custom_measurement_items WHERE bill_number = ? AND fiscal_year = ?")
+                ->execute([$bill_number, $fiscal_year]);
+
+            foreach ($customItems as $index => $item) {
+                $itemIndex = $index + 1;
+                $rawName   = $item['item_name'] ?? $item['name'] ?? 'Custom Item';
+                $cleanName = trim(preg_replace('/\s*\(Custom Made\)$/i', '', $rawName)) ?: 'Custom Item';
+
+                $pdo->prepare("
+                    INSERT INTO custom_measurement_items 
+                    (bill_number, fiscal_year, outlet_id, item_index, item_name, price, quantity)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ")->execute([
+                    $bill_number, $fiscal_year, $outlet_id, $itemIndex,
+                    $cleanName,
+                    (float)($item['price'] ?? 0),
+                    max(1, (int)($item['quantity'] ?? 1))
+                ]);
+
+                $key = (string)$itemIndex;
+                $prices[$key] = (float)($item['price'] ?? 0) * max(1, (int)($item['quantity'] ?? 1));
+
+                $rawMeas = $item['measurements'] ?? null;
+                if (is_array($rawMeas)) {
+                    $measurements[$key] = $rawMeas;
+                } elseif (is_string($rawMeas) && $rawMeas !== '') {
+                    $decoded = json_decode($rawMeas, true);
+                    $measurements[$key] = (json_last_error() === JSON_ERROR_NONE && is_array($decoded))
+                        ? $decoded : ['size' => 'Custom'];
+                } else {
+                    $measurements[$key] = ['size' => 'Custom'];
+                }
+            }
+
+            $measurements_json = json_encode($measurements, JSON_UNESCAPED_UNICODE);
+            $prices_json       = json_encode($prices, JSON_UNESCAPED_UNICODE);
+
+            $pdo->prepare("
+                INSERT INTO customer_measurements 
+                (bill_number, fiscal_year, school_id, outlet_id, customer_name, measurements, prices, created_at, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)
+                ON DUPLICATE KEY UPDATE
+                    measurements=VALUES(measurements), prices=VALUES(prices),
+                    customer_name=VALUES(customer_name), school_id=VALUES(school_id),
+                    outlet_id=VALUES(outlet_id), created_by=VALUES(created_by)
+            ")->execute([
+                $bill_number, $fiscal_year,
+                $_SESSION['selected_school_id'] ?? null,
+                $outlet_id,
+                $customer_name, $measurements_json, $prices_json, $printed_by
+            ]);
         }
 
-        $measurements_json = json_encode($measurements, JSON_UNESCAPED_UNICODE);
-        $prices_json       = json_encode($prices, JSON_UNESCAPED_UNICODE);
+        // ——————— SAVE TO SALES TABLE ———————
+        $pdo->prepare("INSERT INTO sales 
+            (bill_number, branch, outlet_id, fiscal_year, school_name, customer_name, total, payment_method, printed_by, printed_at, bs_datetime, items_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)")
+            ->execute([
+                $bill_number, $location, $outlet_id, $fiscal_year, $school_name,
+                $customer_name, $subtotal, $payment_method, $printed_by,
+                $print_time_db, $items_json
+            ]);
 
-        $school_id = $_SESSION['selected_school_id'] ?? null;
-        $outlet_id_current = $_SESSION['outlet_id'] ?? null;
+        // ——————— CLEANUP ———————
+        unset($_SESSION['temp_bill_items'], $_SESSION['temp_subtotal'], $_SESSION['temp_customer_name'], 
+              $_SESSION['temp_items_json'], $_SESSION['temp_school_name'], $_SESSION['current_bill_number'],
+              $_SESSION['temp_regular_items']);
+        $measHelper->clearAll();
 
-        $stmt = $pdo->prepare("INSERT INTO customer_measurements 
-            (bill_number, fiscal_year, school_id, outlet_id, customer_name, measurements, prices, created_at, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)
-            ON DUPLICATE KEY UPDATE
-            measurements = VALUES(measurements),
-            prices = VALUES(prices),
-            customer_name = VALUES(customer_name),
-            school_id = VALUES(school_id),
-            outlet_id = VALUES(outlet_id),
-            created_at = NOW(),
-            created_by = VALUES(created_by)");
+        ob_clean();
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['success' => true, 'bill_number' => $bill_number]);
+        exit;
 
-        $stmt->execute([
-            $bill_number,
-            $fiscal_year,
-            $school_id,
-            $outlet_id_current,
-            $customer_name,
-            $measurements_json,
-            $prices_json,
-            $printed_by
-        ]);
+    } catch (Throwable $e) {
+        // This will tell you exactly where it dies
+        ob_clean();
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['success' => false, 'error' => 'Server error: ' . $e->getMessage()]);
+        exit;
     }
-
-    // Save full sale
-    $pdo->prepare("INSERT INTO sales 
-        (bill_number, branch, outlet_id, fiscal_year, school_name, customer_name, total, payment_method, printed_by, printed_at, bs_datetime, items_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)")
-        ->execute([
-            $bill_number, $location, $outlet_id, $fiscal_year, $school_name,
-            $customer_name, $subtotal, $payment_method, $printed_by,
-            $print_time_db, $items_json
-        ]);
-
-    // Full cleanup
-    unset($_SESSION['temp_bill_items'], $_SESSION['temp_subtotal'], $_SESSION['temp_customer_name'], 
-          $_SESSION['temp_items_json'], $_SESSION['temp_school_name'], $_SESSION['current_bill_number']);
-    $measHelper->clearAll();
-
-    echo json_encode(['success' => true, 'bill_number' => $bill_number]);
-    exit;
 }
-
 // Secure New Bill
 if (isset($_POST['start_new_bill'])) {
     unset(
