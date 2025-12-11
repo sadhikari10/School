@@ -450,8 +450,11 @@ if (isset($_POST['start_new_bill'])) {
     <div class="info"><strong>Bill No:</strong> <?php echo $bill_number; ?></div>
     <div class="info"><strong>Date:</strong> <?php echo $printed_date_display; ?></div>
     <div class="info"><strong>Customer:</strong> <span id="customerDisplay"><?php echo htmlspecialchars($customer_name ?: 'Customer'); ?></span></div>
-    <?php if (!empty($_SESSION['temp_school_name'])): ?>
-        <div class="info"><strong>School:</strong> <?php echo htmlspecialchars($_SESSION['temp_school_name']); ?></div>
+    <?php 
+        $display_school = $_SESSION['temp_school_name'] ?? $_SESSION['selected_school_name'] ?? '';
+        if (!empty($display_school)): 
+        ?>
+            <div class="info"><strong>School:</strong> <?php echo htmlspecialchars($display_school); ?></div>
         <?php endif; ?>
     <table>
         <thead><tr><th>S.N</th><th>Item</th><th>Size</th><th>Qty</th><th>Amount</th></tr></thead>
