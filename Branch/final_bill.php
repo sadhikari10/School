@@ -71,23 +71,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize_payment'])) 
 
             $pdo->prepare("UPDATE advance_payment SET status = 'paid' WHERE bill_number = ?")->execute([$bill_number]);
 
-            $pdo->prepare("INSERT INTO sales 
-                (bill_number, branch, outlet_id, fiscal_year, school_name, customer_name, total, payment_method, printed_by, printed_at, bs_datetime, items_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)")
-                ->execute([
-                    $bill_number,
-                    $branch_display,
-                    $outlet_id,
-                    $advance['fiscal_year'],
-                    $school_name,
-                    $customer_name,
-                    $total,
-                    $payment_method,
-                    $printed_by,
-                    $bs_datetime,
-                    $advance['items_json']
-                ]);
 
+$advance_date = $advance['created_at'] ?? $advance['bs_date'] ?? $advance['date'] ?? date('Y-m-d');
+
+// Final payment amount entered by cashier
+$final_payment_amount = (float)($_POST['final_payment'] ?? $remaining);
+
+    // Extract Nepali (BS) date from advance_payment.bs_datetime
+    // Format: '2082-09-02 13:23:50' → we want '2082-09-02'
+    $bs_datetime_advance = $advance['bs_datetime'] ?? '';
+    $advance_nepali_date = '';
+
+    if (!empty($bs_datetime_advance)) {
+        // Take first 10 characters: YYYY-MM-DD
+        $advance_nepali_date = substr($bs_datetime_advance, 0, 10);
+
+        // Optional: validate it's a proper date format
+        if (strlen($advance_nepali_date) !== 10 || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $advance_nepali_date)) {
+            $advance_nepali_date = NULL; // fallback if invalid
+        }
+    }
+    $advance_payment_method = $advance['payment_method'] ?? NULL;  // 'cash' or 'online' from advance_payment table
+
+$pdo->prepare("INSERT INTO sales 
+    (bill_number, branch, outlet_id, fiscal_year, school_name, customer_name, total, 
+     payment_method, printed_by, printed_at, bs_datetime, items_json,
+     advance_amount, advance_date, final_amount, advance_payment_method)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?)")
+    ->execute([
+        $bill_number,
+        $branch_display,
+        $outlet_id,
+        $advance['fiscal_year'],
+        $school_name,
+        $customer_name,
+        $total,
+        $payment_method,               // ← final payment method (today)
+        $printed_by,
+        $bs_datetime,
+        $advance['items_json'],
+        $advance_amount,
+        $advance_nepali_date,          // from previous change
+        $final_payment_amount,
+        $advance_payment_method        // ← NEW: method used for advance
+    ]);
             $pdo->commit();
             $payment_success = true;
         } catch (Exception $e) {
@@ -246,17 +273,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize_payment'])) 
         <input type="hidden" name="finalize_payment" value="1">
     </form>
 
-    <button type="button" class="btn-print" onclick="window.print();">
+    <!-- <button type="button" class="btn-print" onclick="window.print();">
         Print Bill
-    </button>
+    </button> -->
 </div>
 <?php else: ?>
 <div class="no-print payment-box">
-    <p style="color:green; font-size:20px; font-weight:bold;">Payment completed successfully!</p>
-    <button type="button" class="btn-print" onclick="window.print();">
+    <p style="color:green; font-size:20px; font-weight:bold;">Payment completed successfully! Printing bill...</p>
+    <!-- <button type="button" class="btn-print" onclick="window.print();">
         Print Final Bill
-    </button>
+    </button> -->
 </div>
+<script>
+    // Automatically trigger print when page loads after successful payment
+    window.onload = function() {
+        window.print();
+    };
+</script>
 <?php endif; ?>
 
 <div class="no-print" style="text-align:center; margin:30px;">
@@ -276,23 +309,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['finalize_payment'])) 
     </div>
 </div>
 
-<!-- Success Modal (only after payment) -->
-<?php if ($payment_success): ?>
-<div class="overlay" id="successModal" style="display:flex;">
-    <div class="success-box">
-        <h3>Success!</h3>
-        <p>Payment Completed Successfully</p>
-        <div class="btn-group">
-            <button class="btn-print" onclick="window.print()">
-                Print Final Bill
-            </button>
-            <button class="btn-yes" onclick="document.getElementById('successModal').style.display='none'" style="background:#34495e;">
-                Close
-            </button>
-        </div>
-    </div>
-</div>
-<?php endif; ?>
 
 <script>
 function showConfirmModal() {

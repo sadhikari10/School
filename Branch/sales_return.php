@@ -2,7 +2,14 @@
 session_start();
 require '../Common/connection.php';
 require '../Common/nepali_date.php';
+require '../vendor/autoload.php'; // PhpSpreadsheet
 
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Fill;
+
+// Security
 if (!isset($_SESSION['user_id'])) {
     header('Location: ../Common/login.php');
     exit();
@@ -29,13 +36,118 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['exchange_return'])) {
     exit();
 }
 
-// Search filters
+// ============= EXCEL EXPORT LOGIC =============
+if (isset($_GET['export']) && $_GET['export'] === 'excel') {
+    $search_bill     = trim($_GET['bill'] ?? '');
+    $search_customer = trim($_GET['customer'] ?? '');
+    $search_date     = trim($_GET['date'] ?? '');
+    $search_payment  = trim($_GET['payment_method'] ?? '');
+    $outlet_id       = $_SESSION['outlet_id'] ?? 0;
+
+    $sql = "SELECT 
+                s.bill_number,
+                s.bs_datetime,
+                s.customer_name,
+                s.school_name,
+                s.total,
+                s.payment_method
+            FROM sales s
+            WHERE s.printed_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+              AND s.exchange_status = 'original'
+              AND s.outlet_id = ?";
+
+    $params = [$outlet_id];
+
+    if ($search_bill !== '') {
+        $sql .= " AND s.bill_number LIKE ?";
+        $params[] = "%$search_bill%";
+    }
+    if ($search_customer !== '') {
+        $sql .= " AND s.customer_name LIKE ?";
+        $params[] = "%$search_customer%";
+    }
+    if ($search_date !== '') {
+        $sql .= " AND s.bs_datetime LIKE ?";
+        $params[] = "$search_date%";
+    }
+    if ($search_payment !== '') {
+        $sql .= " AND s.payment_method = ?";
+        $params[] = $search_payment;
+    }
+
+    $sql .= " ORDER BY s.printed_at DESC";
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $spreadsheet = new Spreadsheet();
+    $sheet = $spreadsheet->getActiveSheet();
+    $sheet->setTitle('Exchange Return Sales');
+
+    // Headers
+    $headers = ['S.N', 'Bill No.', 'Date (BS)', 'Customer', 'School', 'Total Amount', 'Payment Method'];
+    $col = 'A';
+    foreach ($headers as $h) {
+        $sheet->setCellValue($col . '1', $h);
+        $col++;
+    }
+
+    // Header styling
+    $sheet->getStyle('A1:G1')->getFont()->setBold(true)->setSize(12);
+    $sheet->getStyle('A1:G1')->getFill()
+        ->setFillType(Fill::FILL_SOLID)
+        ->getStartColor()->setARGB('FF8e44ad');
+
+    // Data
+    $row = 2;
+    $sn = 1;
+    $grand_total = 0;
+
+    foreach ($sales as $s) {
+        $sheet->setCellValue('A' . $row, $sn++);
+        $sheet->setCellValue('B' . $row, $s['bill_number']);
+        $sheet->setCellValue('C' . $row, $s['bs_datetime']);
+        $sheet->setCellValue('D' . $row, $s['customer_name'] ?: 'Walk-in');
+        $sheet->setCellValue('E' . $row, $s['school_name']);
+        $sheet->setCellValue('F' . $row, $s['total']);
+        $sheet->setCellValue('G' . $row, ucfirst($s['payment_method']));
+
+        $grand_total += $s['total'];
+        $row++;
+    }
+
+    // Grand Total
+    $sheet->setCellValue('E' . $row, 'GRAND TOTAL');
+    $sheet->setCellValue('F' . $row, $grand_total);
+    $sheet->getStyle('E' . $row . ':F' . $row)->getFont()->setBold(true)->setSize(13);
+    $sheet->getStyle('F2:F' . $row)->getNumberFormat()->setFormatCode('#,##0.00');
+    $sheet->getStyle('F' . $row)->getNumberFormat()->setFormatCode('#,##0.00');
+    $sheet->getStyle('F2:F' . $row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+
+    // Auto-size columns
+    foreach (range('A', 'G') as $c) {
+        $sheet->getColumnDimension($c)->setAutoSize(true);
+    }
+
+    $sheet->freezePane('A2');
+
+    // Download
+    $filename = "Sales_" . date('Y-m-d') . ".xlsx";
+    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Cache-Control: max-age=0');
+    $writer = new Xlsx($spreadsheet);
+    $writer->save('php://output');
+    exit();
+}
+
+// ============= NORMAL DISPLAY LOGIC =============
 $search_bill     = trim($_GET['bill'] ?? '');
 $search_customer = trim($_GET['customer'] ?? '');
 $search_date     = trim($_GET['date'] ?? '');
-
-// Get the current user's outlet (staff only, admin can see all or handle separately if needed)
-$outlet_id = $_SESSION['outlet_id'] ?? 0;
+$search_payment  = trim($_GET['payment_method'] ?? '');
+$outlet_id       = $_SESSION['outlet_id'] ?? 0;
 
 $sql = "SELECT 
             s.bill_number,
@@ -62,6 +174,10 @@ if ($search_customer !== '') {
 if ($search_date !== '') {
     $sql .= " AND s.bs_datetime LIKE ?";
     $params[] = "$search_date%";
+}
+if ($search_payment !== '') {
+    $sql .= " AND s.payment_method = ?";
+    $params[] = $search_payment;
 }
 
 $sql .= " ORDER BY s.printed_at DESC";
@@ -119,15 +235,15 @@ $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
         justify-content:center;
         align-items:center;
     }
-    .search-bar input{
+    .search-bar input, .search-bar select{
         padding:14px 18px;
         border:2px solid #ddd;
         border-radius:12px;
-        width:240px;
+        width:220px;
         font-size:1rem;
         transition:all 0.3s;
     }
-    .search-bar input:focus{
+    .search-bar input:focus, .search-bar select:focus{
         outline:none;
         border-color:#8e44ad;
         box-shadow:0 0 0 4px rgba(142,68,173,0.2);
@@ -151,6 +267,29 @@ $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
     .clear-btn:hover{
         background:#7f8c8d !important;
+    }
+
+    .actions {
+        text-align: center;
+        padding: 15px;
+        background: #f8f1ff;
+    }
+    .export-btn {
+        display: inline-block;
+        padding: 14px 32px;
+        background: #27ae60;
+        color: white;
+        text-decoration: none;
+        border-radius: 50px;
+        font-weight: 600;
+        font-size: 1rem;
+        box-shadow: 0 6px 20px rgba(39,174,96,0.3);
+        transition: all 0.3s;
+    }
+    .export-btn:hover {
+        background: #219653;
+        transform: translateY(-3px);
+        box-shadow: 0 10px 30px rgba(39,174,96,0.4);
     }
 
     table{
@@ -220,7 +359,6 @@ $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
         transform:translateY(-3px);
     }
 
-    /* Success Message */
     .success-msg{
         padding:18px;
         background:#d5f4e6;
@@ -232,7 +370,6 @@ $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
         border-left:6px solid #27ae60;
     }
 
-    /* Modal */
     .modal{
         display:none;
         position:fixed;
@@ -329,9 +466,24 @@ $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <input type="text" name="bill" placeholder="Bill Number" value="<?=htmlspecialchars($search_bill)?>">
             <input type="text" name="customer" placeholder="Customer Name" value="<?=htmlspecialchars($search_customer)?>">
             <input type="text" name="date" placeholder="BS Date (2082-08-21)" value="<?=htmlspecialchars($search_date)?>">
+            <select name="payment_method">
+                <option value="">All Payment Methods</option>
+                <option value="cash" <?= $search_payment === 'cash' ? 'selected' : '' ?>>Cash</option>
+                <option value="online" <?= $search_payment === 'online' ? 'selected' : '' ?>>Online</option>
+            </select>
             <button type="submit">Search</button>
             <a href="sales_return.php"><button type="button" class="clear-btn">Clear</button></a>
         </form>
+    </div>
+
+    <!-- Export Button -->
+    <div class="actions">
+        <a href="sales_return.php?export=excel<?php 
+            $query = $_SERVER['QUERY_STRING'] ?? '';
+            echo $query ? '&' . htmlentities($query) : '';
+        ?>" class="export-btn">
+            <i class="fas fa-file-excel"></i> Export to Excel
+        </a>
     </div>
 
     <?php if (empty($sales)): ?>

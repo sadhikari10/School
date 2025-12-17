@@ -1,8 +1,15 @@
 <?php
 session_start();
 require '../Common/connection.php';
-require '../Common/nepali_date.php'; // This file should have a function to convert date to Nepali BS
+require '../Common/nepali_date.php';
+require '../vendor/autoload.php'; // PhpSpreadsheet
 
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Fill;
+
+// Security
 if (!isset($_SESSION['user_id'])) {
     header('Location: ../Common/login.php');
     exit();
@@ -21,14 +28,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['complete_bill'])) {
 // Handle Exchange/Return Submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['exchange_return'])) {
     $bill_number = (int)$_POST['bill_number'];
-    $action = $_POST['action_type']; // returned/exchanged
+    $action = $_POST['action_type'];
     $reason = trim($_POST['reason']);
     $amount_paid = (float)$_POST['amount_paid'];
     $amount_returned = (float)$_POST['amount_returned'];
     $user_id = $_SESSION['user_id'];
-    $outlet_id = $_SESSION['selected_outlet_id'] ?? 1; 
-    $logged_datetime = date('Y-m-d H:i:s');
-    $bs_date = nepali_date_time(); // Convert to Nepali BS
+    $outlet_id = $_SESSION['selected_outlet_id'] ?? 1;
+    $bs_date = nepali_date_time();
 
     $stmt = $pdo->prepare("INSERT INTO return_exchange_log 
         (bill_id, user_id, outlet_id, action, reason, amount_returned_by_customer, amount_returned_to_customer, logged_datetime)
@@ -42,12 +48,119 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['exchange_return'])) {
     exit();
 }
 
-// Search & Filter Logic
+// ============= EXCEL EXPORT LOGIC =============
+if (isset($_GET['export']) && $_GET['export'] === 'excel') {
+    $search_bill = trim($_GET['bill'] ?? '');
+    $search_customer = trim($_GET['customer'] ?? '');
+    $search_date = trim($_GET['date'] ?? '');
+    $search_payment = trim($_GET['payment_method'] ?? '');
+    $outlet_id = $_SESSION['outlet_id'] ?? 0;
+
+    $sql = "SELECT ap.bill_number, ap.bs_datetime, ap.customer_name, ap.advance_amount, ap.total,
+            (ap.total - ap.advance_amount) AS remaining, ap.payment_method,
+            o.location AS branch_name
+            FROM advance_payment ap
+            LEFT JOIN outlets o ON ap.outlet_id = o.outlet_id
+            WHERE ap.status = 'unpaid' AND ap.outlet_id = ?";
+    $params = [$outlet_id];
+
+    if ($search_bill !== '') {
+        $sql .= " AND ap.bill_number LIKE ?";
+        $params[] = '%' . $search_bill . '%';
+    }
+    if ($search_customer !== '') {
+        $sql .= " AND ap.customer_name LIKE ?";
+        $params[] = '%' . $search_customer . '%';
+    }
+    if ($search_date !== '') {
+        $sql .= " AND ap.bs_datetime LIKE ?";
+        $params[] = $search_date . '%';
+    }
+    if ($search_payment !== '') {
+        $sql .= " AND ap.payment_method = ?";
+        $params[] = $search_payment;
+    }
+
+    $sql .= " ORDER BY ap.id DESC";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $advances = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $spreadsheet = new Spreadsheet();
+    $sheet = $spreadsheet->getActiveSheet();
+    $sheet->setTitle('Advance Payments');
+
+    // Headers
+    $headers = ['S.N', 'Bill No.', 'Date (BS)', 'Customer', 'Advance Amount', 'Total Bill', 'Remaining', 'Payment Method', 'Branch'];
+    $col = 'A';
+    foreach ($headers as $h) {
+        $sheet->setCellValue($col . '1', $h);
+        $col++;
+    }
+
+    // Header styling
+    $sheet->getStyle('A1:I1')->getFont()->setBold(true)->setSize(12);
+    $sheet->getStyle('A1:I1')->getFill()
+        ->setFillType(Fill::FILL_SOLID)
+        ->getStartColor()->setARGB('FF667eea');
+
+    // Data rows
+    $row = 2;
+    $sn = 1;
+    $grand_advance = $grand_total = $grand_remaining = 0;
+
+    foreach ($advances as $adv) {
+        $remaining = $adv['remaining'];
+        $payment = ucfirst($adv['payment_method'] ?? 'N/A');
+
+        $sheet->setCellValue('A' . $row, $sn++);
+        $sheet->setCellValue('B' . $row, $adv['bill_number']);
+        $sheet->setCellValue('C' . $row, $adv['bs_datetime']);
+        $sheet->setCellValue('D' . $row, $adv['customer_name'] ?: 'Walk-in');
+        $sheet->setCellValue('E' . $row, $adv['advance_amount']);
+        $sheet->setCellValue('F' . $row, $adv['total']);
+        $sheet->setCellValue('G' . $row, $remaining);
+        $sheet->setCellValue('H' . $row, $payment);
+        $sheet->setCellValue('I' . $row, $adv['branch_name'] ?? 'Unknown');
+
+        $grand_advance += $adv['advance_amount'];
+        $grand_total += $adv['total'];
+        $grand_remaining += $remaining;
+
+        $row++;
+    }
+
+    // Grand Total
+    $sheet->setCellValue('D' . $row, 'GRAND TOTAL');
+    $sheet->setCellValue('E' . $row, $grand_advance);
+    $sheet->setCellValue('F' . $row, $grand_total);
+    $sheet->setCellValue('G' . $row, $grand_remaining);
+    $sheet->getStyle('D' . $row . ':I' . $row)->getFont()->setBold(true)->setSize(13);
+    $sheet->getStyle('E' . $row . ':G' . $row)->getNumberFormat()->setFormatCode('#,##0.00');
+
+    // Formatting
+    $sheet->getStyle('E2:G' . ($row))->getNumberFormat()->setFormatCode('#,##0.00');
+    $sheet->getStyle('E2:G' . $row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+    foreach (range('A', 'I') as $c) {
+        $sheet->getColumnDimension($c)->setAutoSize(true);
+    }
+    $sheet->freezePane('A2');
+
+    // Download
+    $filename = "Advance_Payments_" . date('Y-m-d') . ".xlsx";
+    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Cache-Control: max-age=0');
+    $writer = new Xlsx($spreadsheet);
+    $writer->save('php://output');
+    exit();
+}
+
+// ============= NORMAL DISPLAY LOGIC =============
 $search_bill = trim($_GET['bill'] ?? '');
 $search_customer = trim($_GET['customer'] ?? '');
 $search_date = trim($_GET['date'] ?? '');
-
-// Get current staff's outlet
+$search_payment = trim($_GET['payment_method'] ?? '');
 $outlet_id = $_SESSION['outlet_id'] ?? 0;
 
 $sql = "SELECT ap.*, o.location AS branch_name 
@@ -68,6 +181,10 @@ if ($search_date !== '') {
     $sql .= " AND ap.bs_datetime LIKE ?";
     $params[] = $search_date . '%';
 }
+if ($search_payment !== '') {
+    $sql .= " AND ap.payment_method = ?";
+    $params[] = $search_payment;
+}
 
 $sql .= " ORDER BY ap.id DESC";
 $stmt = $pdo->prepare($sql);
@@ -81,20 +198,25 @@ $advances = $stmt->fetchAll(PDO::FETCH_ASSOC);
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Advance Payments Record</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
         body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; margin: 0; padding: 20px; color: #2c3e50; }
-        .container { max-width: 1000px; margin: 0 auto; background: white; border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); overflow: hidden; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); overflow: hidden; }
         .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }
         .header h1 { margin: 0; font-size: 28px; font-weight: 600; }
         .header p { margin: 10px 0 0; opacity: 0.95; }
 
-        .search-bar { padding: 20px; background: #f8f9fa; border-bottom: 1px solid #eee; display: flex; flex-wrap: wrap; gap: 15px; justify-content: center; align-items: center; }
-        .search-bar input, .search-bar button { padding: 12px 16px; font-size: 15px; border: 1px solid #ddd; border-radius: 8px; }
-        .search-bar input { width: 220px; }
+        .search-bar { padding: 20px; background: #f8f9fa; border-bottom: 1px solid #eee; display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; align-items: center; }
+        .search-bar input, .search-bar select, .search-bar button { padding: 12px 16px; font-size: 15px; border: 1px solid #ddd; border-radius: 8px; }
+        .search-bar input, .search-bar select { width: 200px; }
         .search-bar button { background: #667eea; color: white; cursor: pointer; font-weight: bold; border: none; }
         .search-bar button:hover { background: #5a6fd8; }
         .clear-btn { background: #95a5a6 !important; }
         .clear-btn:hover { background: #7f8c8d !important; }
+
+        .actions { text-align: center; padding: 15px; background: #f8f9fa; }
+        .export-btn { display: inline-block; padding: 12px 28px; background: #27ae60; color: white; text-decoration: none; border-radius: 50px; font-weight: bold; margin: 0 10px; }
+        .export-btn:hover { background: #219653; }
 
         .stats { padding: 15px; background: #f8f9fa; text-align: center; font-size: 17px; color: #27ae60; font-weight: 600; }
 
@@ -109,12 +231,13 @@ $advances = $stmt->fetchAll(PDO::FETCH_ASSOC);
         .remaining { font-weight: bold; }
         .remaining.positive { color: #e74c3c; }
         .remaining.zero { color: #27ae60; }
+        .payment { font-weight: 600; text-transform: capitalize; }
 
         .date { font-family: 'Courier New', monospace; color: #7f8c8d; }
 
         .action-btn, .exchange-btn {
             background: #27ae60; color: white; border: none; padding: 10px 18px;
-            border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 13px;
+            border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 13px; margin: 0 4px;
         }
         .action-btn:hover, .exchange-btn:hover { background: #219653; }
 
@@ -122,7 +245,6 @@ $advances = $stmt->fetchAll(PDO::FETCH_ASSOC);
         .back-btn { display: inline-block; margin: 25px; padding: 14px 30px; background: #667eea; color: white; text-decoration: none; border-radius: 10px; font-weight: 600; }
         .back-btn:hover { background: #5a6fd8; }
 
-        /* Modal Styles */
         .modal { display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5); }
         .modal-content { background-color: #fefefe; margin: 10% auto; padding: 30px; border: 1px solid #888; width: 400px; border-radius: 12px; position: relative; }
         .close { color: #aaa; float: right; font-size: 28px; font-weight: bold; position: absolute; right: 20px; top: 10px; cursor: pointer; }
@@ -133,7 +255,7 @@ $advances = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         @media (max-width: 768px) {
             .search-bar { flex-direction: column; }
-            .search-bar input { width: 100%; }
+            .search-bar input, .search-bar select { width: 100%; }
             table, thead, tbody, th, td, tr { display: block; }
             thead tr { display: none; }
             tr { margin-bottom: 20px; border: 1px solid #ddd; border-radius: 12px; padding: 15px; }
@@ -153,19 +275,34 @@ $advances = $stmt->fetchAll(PDO::FETCH_ASSOC);
         <div class="stats"><?php echo $_SESSION['message']; unset($_SESSION['message']); ?></div>
     <?php endif; ?>
 
-    <!-- Search Bar -->
+    <!-- Search Bar with Payment Method Filter -->
     <div class="search-bar">
         <form method="GET">
             <input type="text" name="bill" placeholder="Bill Number" value="<?php echo htmlspecialchars($search_bill); ?>">
             <input type="text" name="customer" placeholder="Customer Name" value="<?php echo htmlspecialchars($search_customer); ?>">
             <input type="text" name="date" placeholder="Date (e.g. 2081-08-15)" value="<?php echo htmlspecialchars($search_date); ?>">
+            <select name="payment_method">
+                <option value="">All Payment Methods</option>
+                <option value="cash" <?php echo $search_payment === 'cash' ? 'selected' : ''; ?>>Cash</option>
+                <option value="online" <?php echo $search_payment === 'online' ? 'selected' : ''; ?>>Online</option>
+            </select>
             <button type="submit">Search</button>
             <a href="advance_payment.php"><button type="button" class="clear-btn">Clear</button></a>
         </form>
     </div>
 
+    <!-- Export Button -->
+    <div class="actions">
+        <a href="advance_payment.php?export=excel<?php 
+            $query = $_SERVER['QUERY_STRING'] ?? '';
+            echo $query ? '&' . htmlentities($query) : '';
+        ?>" class="export-btn">
+            <i class="fas fa-file-excel"></i> Export to Excel
+        </a>
+    </div>
+
     <div class="stats">
-        <?php if (!empty($search_bill) || !empty($search_customer) || !empty($search_date)): ?>
+        <?php if (!empty($search_bill) || !empty($search_customer) || !empty($search_date) || !empty($search_payment)): ?>
             Search Results: <strong><?php echo count($advances); ?></strong> unpaid advance bill(s) found
         <?php else: ?>
             Total Unpaid Advance Bills: <strong><?php echo count($advances); ?></strong>
@@ -174,7 +311,7 @@ $advances = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     <?php if (empty($advances)): ?>
         <div class="no-data">
-            <?php if (!empty($search_bill) || !empty($search_customer) || !empty($search_date)): ?>
+            <?php if (!empty($search_bill) || !empty($search_customer) || !empty($search_date) || !empty($search_payment)): ?>
                 No advance bills found matching your search.
             <?php else: ?>
                 No pending advance bills. All are completed!
@@ -191,12 +328,15 @@ $advances = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <th>Advance</th>
                 <th>Total Bill</th>
                 <th>Remaining</th>
+                <th>Payment Method</th>
+                <th>Branch</th>
                 <th>Action</th>
             </tr>
             </thead>
             <tbody>
             <?php foreach ($advances as $i => $row): 
                 $remaining = $row['total'] - $row['advance_amount'];
+                $payment = ucfirst($row['payment_method'] ?? 'N/A');
             ?>
                 <tr>
                     <td data-label="#"><?php echo $i + 1; ?></td>
@@ -209,6 +349,8 @@ $advances = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         Rs. <?php echo number_format($remaining); ?>
                         <?php echo $remaining == 0 ? ' (Paid)' : ''; ?>
                     </td>
+                    <td data-label="Payment Method" class="payment"><?php echo $payment; ?></td>
+                    <td data-label="Branch"><?php echo htmlspecialchars($row['branch_name'] ?? 'Unknown'); ?></td>
                     <td data-label="Action">
                         <form method="POST" style="display:inline;">
                             <input type="hidden" name="complete_bill" value="1">
@@ -228,7 +370,7 @@ $advances = $stmt->fetchAll(PDO::FETCH_ASSOC);
     </div>
 </div>
 
-<!-- Modal -->
+<!-- Modal (unchanged) -->
 <div id="exchangeModal" class="modal">
     <div class="modal-content">
         <span class="close" onclick="closeModal()">&times;</span>

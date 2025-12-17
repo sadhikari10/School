@@ -6,6 +6,8 @@ require '../vendor/autoload.php'; // PhpSpreadsheet
 
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Fill;
 
 // Security check
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin' || !isset($_SESSION['selected_outlet_id'])) {
@@ -17,14 +19,13 @@ $outlet_id   = $_SESSION['selected_outlet_id'];
 $outlet_name = $_SESSION['selected_outlet_name'] ?? 'Unknown Outlet';
 
 // =============================================
-// EXCEL EXPORT LOGIC
+// EXCEL EXPORT LOGIC (NOW FULLY WORKING + AGGREGATED ITEMS)
 // =============================================
 if (isset($_GET['export']) && $_GET['export'] === 'excel') {
 
     $params = [$outlet_id];
     $filters = ["status = 'unpaid'"];
 
-    // Apply all filters (same logic as display)
     if (!empty($_GET['fiscal_year'])) { $filters[] = "fiscal_year = ?"; $params[] = $_GET['fiscal_year']; }
     if (!empty($_GET['school_name'])) { $filters[] = "school_name LIKE ?"; $params[] = "%{$_GET['school_name']}%"; }
     if (!empty($_GET['customer_name'])) { $filters[] = "customer_name LIKE ?"; $params[] = "%{$_GET['customer_name']}%"; }
@@ -54,52 +55,136 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $stmt->execute($params);
     $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Create Excel
+    // Calculate grand totals
+    $grand_advance = $grand_total = $grand_remaining = 0;
+    foreach ($payments as $p) {
+        $grand_advance += $p['advance_amount'];
+        $grand_total += $p['total'];
+        $grand_remaining += ($p['total'] - $p['advance_amount']);
+    }
+
+    // Aggregate items
+    $aggregatedItems = [];
+    foreach ($payments as $p) {
+        $rawItems = json_decode($p['items_json'], true) ?? [];
+        foreach ($rawItems as $it) {
+            $fullName = $it['name'] ?? '';
+            $name = $fullName;
+            $brand = 'Unknown';
+            if (strpos($fullName, ' - ') !== false) {
+                $parts = explode(' - ', $fullName, 2);
+                $name = trim($parts[0]);
+                $brand = trim($parts[1]);
+            }
+            $size = $it['size'] ?? 'N/A';
+            $price = $it['price'] ?? 0;
+            $qty = $it['quantity'] ?? 0;
+
+            $key = $name . '|' . $brand . '|' . $size . '|' . $price;
+
+            if (!isset($aggregatedItems[$key])) {
+                $aggregatedItems[$key] = [
+                    'name' => $name,
+                    'brand' => $brand,
+                    'size' => $size,
+                    'price' => $price,
+                    'quantity' => 0
+                ];
+            }
+            $aggregatedItems[$key]['quantity'] += $qty;
+        }
+    }
+
     $spreadsheet = new Spreadsheet();
     $sheet = $spreadsheet->getActiveSheet();
     $sheet->setTitle('Advance Payments');
 
-    // Headers
-    $headers = ['S.N', 'Bill Number', 'Fiscal Year', 'School', 'Customer', 'Advance Amount', 'Payment Method', 'Printed By', 'Date & Time', 'Items'];
+    // ---------- Detailed Section ----------
+    $headers = ['S.N', 'Bill Number', 'Fiscal Year', 'School', 'Customer', 'Advance', 'Total Bill', 'Remaining', 'Payment', 'Printed By', 'Date & Time', 'Items'];
     $col = 'A';
     foreach ($headers as $h) $sheet->setCellValue($col++ . '1', $h);
 
-    // Style header
-    $sheet->getStyle('A1:' . $col . '1')->getFont()->setBold(true)->setSize(12);
-    $sheet->getStyle('A1:' . $col . '1')->getFill()
-        ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
-        ->getStartColor()->setARGB('FF8E44AD');
+    $sheet->getStyle('A1:L1')->getFont()->setBold(true)->setSize(12);
+    $sheet->getStyle('A1:L1')->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('FF8E44AD');
 
-    // Fill data
     $row = 2;
-    foreach ($payments as $i => $p) {
+    $sn = 1;
+    foreach ($payments as $p) {
         $items = json_decode($p['items_json'], true) ?? [];
         $itemsText = '';
         foreach ($items as $it) {
-            $itemsText .= $it['name'] . ' (' . ($it['size'] ?? '') . ') ×' . $it['quantity'] . ' ->' . number_format($it['price'], 2) . "\n";
+            $itemsText .= $it['name'] . ' (' . ($it['size'] ?? '') . ') ×' . $it['quantity'] . ' -> ' . number_format($it['price'], 2) . "\n";
         }
+        $remaining = $p['total'] - $p['advance_amount'];
 
-        $sheet->setCellValue('A' . $row, $i + 1);
+        $sheet->setCellValue('A' . $row, $sn++);
         $sheet->setCellValue('B' . $row, $p['bill_number']);
         $sheet->setCellValue('C' . $row, $p['fiscal_year']);
         $sheet->setCellValue('D' . $row, $p['school_name']);
         $sheet->setCellValue('E' . $row, $p['customer_name'] ?: 'Walk-in');
         $sheet->setCellValue('F' . $row, $p['advance_amount']);
-        $sheet->setCellValue('G' . $row, $p['payment_method']);
-        $sheet->setCellValue('H' . $row, $p['printed_by'] ?? '');
-        $sheet->setCellValue('I' . $row, $p['bs_datetime']);
-        $sheet->setCellValue('J' . $row, $itemsText);
-        $sheet->getStyle('J' . $row)->getAlignment()->setWrapText(true);
+        $sheet->setCellValue('G' . $row, $p['total']);
+        $sheet->setCellValue('H' . $row, $remaining);
+        $sheet->setCellValue('I' . $row, ucfirst($p['payment_method']));
+        $sheet->setCellValue('J' . $row, $p['printed_by'] ?? '');
+        $sheet->setCellValue('K' . $row, $p['bs_datetime']);
+        $sheet->setCellValue('L' . $row, $itemsText);
+        $sheet->getStyle('L' . $row)->getAlignment()->setWrapText(true);
         $row++;
     }
 
-    // Grand Total
+    // Grand Total (Detailed)
     $sheet->setCellValue('E' . $row, 'GRAND TOTAL');
-    $sheet->setCellValue('F' . $row, '=SUM(F2:F' . ($row - 1) . ')');
-    $sheet->getStyle('E' . $row . ':F' . $row)->getFont()->setBold(true)->setSize(13);
+    $sheet->setCellValue('F' . $row, $grand_advance);
+    $sheet->setCellValue('G' . $row, $grand_total);
+    $sheet->setCellValue('H' . $row, $grand_remaining);
+    $sheet->getStyle('E' . $row . ':H' . $row)->getFont()->setBold(true)->setSize(13);
+    $sheet->getStyle('F2:H' . $row)->getNumberFormat()->setFormatCode('#,##0.00');
+    $sheet->getStyle('F2:H' . $row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+    $row += 2;
 
-    // Auto-size
-    foreach (range('A', 'J') as $c) $sheet->getColumnDimension($c)->setAutoSize(true);
+    // ---------- Aggregated Items Section ----------
+    if (!empty($aggregatedItems)) {
+        $sheet->setCellValue('A' . $row, 'AGGREGATED ITEM SUMMARY');
+        $sheet->getStyle('A' . $row)->getFont()->setBold(true)->setSize(14);
+        $sheet->mergeCells('A' . $row . ':G' . $row);
+        $sheet->getStyle('A' . $row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+        $row++;
+
+        $summaryHeaders = ['S.N', 'Name', 'Brand', 'Size', 'Quantity', 'Price Per Item', 'Total Amount'];
+        $col = 'A';
+        foreach ($summaryHeaders as $h) $sheet->setCellValue($col++ . $row, $h);
+
+        $sheet->getStyle('A' . $row . ':G' . $row)->getFont()->setBold(true)->setSize(12);
+        $sheet->getStyle('A' . $row . ':G' . $row)->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('FF27ae60');
+        $row++;
+
+        $summarySn = 1;
+        $grandItemTotal = 0;
+        foreach ($aggregatedItems as $item) {
+            $lineTotal = $item['quantity'] * $item['price'];
+            $grandItemTotal += $lineTotal;
+
+            $sheet->setCellValue('A' . $row, $summarySn++);
+            $sheet->setCellValue('B' . $row, $item['name']);
+            $sheet->setCellValue('C' . $row, $item['brand']);
+            $sheet->setCellValue('D' . $row, $item['size']);
+            $sheet->setCellValue('E' . $row, $item['quantity']);
+            $sheet->setCellValue('F' . $row, $item['price']);
+            $sheet->setCellValue('G' . $row, $lineTotal);
+            $row++;
+        }
+
+        $sheet->setCellValue('E' . $row, 'GRAND TOTAL (Items)');
+        $sheet->setCellValue('G' . $row, $grandItemTotal);
+        $sheet->getStyle('E' . $row . ':G' . $row)->getFont()->setBold(true)->setSize(13);
+        $sheet->getStyle('F' . ($row - count($aggregatedItems) - 1) . ':G' . $row)->getNumberFormat()->setFormatCode('#,##0.00');
+        $sheet->getStyle('E' . ($row - count($aggregatedItems) - 1) . ':G' . $row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+    }
+
+    // Formatting
+    foreach (range('A', 'L') as $c) $sheet->getColumnDimension($c)->setAutoSize(true);
+    $sheet->getColumnDimension('L')->setWidth(60);
 
     // Download
     $filename = "Advance_Payments_Unpaid_" . date('Y-m-d') . ".xlsx";
@@ -112,7 +197,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
 }
 
 // =============================================
-// NORMAL DISPLAY (same as before)
+// NORMAL DISPLAY LOGIC (with aggregated items)
 // =============================================
 $params = [$outlet_id];
 $filters = ["status = 'unpaid'"];
@@ -145,6 +230,46 @@ $sql = "SELECT * FROM advance_payment WHERE outlet_id = ? AND " . implode(' AND 
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Grand totals
+$grand_advance = $grand_total = $grand_remaining = 0;
+foreach ($payments as $p) {
+    $grand_advance += $p['advance_amount'];
+    $grand_total += $p['total'];
+    $grand_remaining += ($p['total'] - $p['advance_amount']);
+}
+
+// Aggregate items
+$aggregatedItems = [];
+foreach ($payments as $p) {
+    $rawItems = json_decode($p['items_json'], true) ?? [];
+    foreach ($rawItems as $it) {
+        $fullName = $it['name'] ?? '';
+        $name = $fullName;
+        $brand = 'Unknown';
+        if (strpos($fullName, ' - ') !== false) {
+            $parts = explode(' - ', $fullName, 2);
+            $name = trim($parts[0]);
+            $brand = trim($parts[1]);
+        }
+        $size = $it['size'] ?? 'N/A';
+        $price = $it['price'] ?? 0;
+        $qty = $it['quantity'] ?? 0;
+
+        $key = $name . '|' . $brand . '|' . $size . '|' . $price;
+
+        if (!isset($aggregatedItems[$key])) {
+            $aggregatedItems[$key] = [
+                'name' => $name,
+                'brand' => $brand,
+                'size' => $size,
+                'price' => $price,
+                'quantity' => 0
+            ];
+        }
+        $aggregatedItems[$key]['quantity'] += $qty;
+    }
+}
 ?>
 
 <!DOCTYPE html>
@@ -155,9 +280,11 @@ $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <title>Advance Payments (Unpaid) - <?php echo htmlspecialchars($outlet_name); ?></title>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
 <style>
+    /* Your existing styles (unchanged) */
     body{font-family:'Segoe UI',sans-serif;padding:20px;background:#f4f6f9;}
-    .container{max-width:1300px;margin:0 auto;}
+    .container{max-width:1400px;margin:0 auto;}
     h1{color:#2c3e50;text-align:center;margin-bottom:20px;}
+    h2{color:#27ae60;margin-top:50px;}
     .actions{text-align:center;margin:25px 0;}
     .btn{padding:12px 32px;margin:0 10px;border-radius:50px;color:white;text-decoration:none;font-weight:bold;}
     .btn-excel{background:#e67e22;}
@@ -168,11 +295,15 @@ $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
     th,td{padding:12px;border:1px solid #ddd;text-align:left;font-size:0.95rem;}
     th{background:#8e44ad;color:white;}
     tr:hover{background:#f8f5ff;}
-    .items-list{padding-left:20px;margin:5px 0;}
-    .filter-form{background:white;padding:20px;border-radius:10px;box-shadow:0 3px 15px rgba(0,0,0,0.1);text-align:center;margin-bottom:20px;}
-    .filter-form input{padding:10px 14px;margin:5px;border:1px solid #ddd;border-radius:6px;font-size:0.9rem;}
+    .numeric{text-align:right;font-weight:600;}
+    .grand-total{background:#f0e6ff;font-weight:bold;font-size:1.1rem;}
+    .items-list{padding-left:20px;margin:5px 0;font-size:0.9rem;}
+    .filter-form{background:white;padding:20px;border-radius:10px;box-shadow:0 3px 15px rgba(0,0,0,0.1);text-align:center;margin-bottom:20px;display:flex;flex-wrap:wrap;gap:10px;justify-content:center;}
+    .filter-form input{padding:10px 14px;border:1px solid #ddd;border-radius:6px;font-size:0.9rem;min-width:140px;}
     .filter-form button{padding:10px 24px;background:#27ae60;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:bold;}
     .filter-form button:hover{background:#219150;}
+    .summary-table th{background:#27ae60;}
+    .summary-table .grand-total{background:#d5f4e6;}
 </style>
 </head>
 <body>
@@ -183,7 +314,7 @@ $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
         <input type="text" name="fiscal_year" placeholder="Fiscal Year" value="<?=htmlspecialchars($_GET['fiscal_year']??'')?>">
         <input type="text" name="school_name" placeholder="School" value="<?=htmlspecialchars($_GET['school_name']??'')?>">
         <input type="text" name="customer_name" placeholder="Customer" value="<?=htmlspecialchars($_GET['customer_name']??'')?>">
-        <input type="text" name="payment_method" placeholder="Payment" value="<?=htmlspecialchars($_GET['payment_method']??'')?>">
+        <input type="text" name="payment_method" placeholder="Payment (cash/online)" value="<?=htmlspecialchars($_GET['payment_method']??'')?>">
         <input type="text" name="printed_by" placeholder="Printed By" value="<?=htmlspecialchars($_GET['printed_by']??'')?>">
         <input type="text" name="bill_number" placeholder="Bill No." value="<?=htmlspecialchars($_GET['bill_number']??'')?>">
         <input type="text" name="start_date" placeholder="Start YYYY-MM-DD" value="<?=htmlspecialchars($_GET['start_date']??'')?>">
@@ -192,10 +323,8 @@ $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
     </form>
 
     <div class="actions">
-        <a href="advance_payment.php?export=excel<?php 
-            echo !empty($_SERVER['QUERY_STRING']) ? '&' . htmlentities($_SERVER['QUERY_STRING']) : ''; 
-        ?>" class="btn btn-excel">
-            Export to Excel
+        <a href="advance_payment.php?export=excel<?php echo !empty($_SERVER['QUERY_STRING']) ? '&' . htmlentities($_SERVER['QUERY_STRING']) : ''; ?>" class="btn btn-excel">
+            <i class="fas fa-file-excel"></i> Export to Excel (Single Sheet)
         </a>
         <a href="dashboard.php" class="btn btn-back">Back to Dashboard</a>
     </div>
@@ -203,48 +332,18 @@ $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
     <?php if(empty($payments)): ?>
         <p style="text-align:center;color:#7f8c8d;font-size:1.2rem;padding:40px;">No unpaid advance payments found.</p>
     <?php else: ?>
+        <!-- Detailed Table -->
         <table>
-            <thead>
-                <tr>
-                    <th>#</th>
-                    <th>Bill Number</th>
-                    <th>Fiscal Year</th>
-                    <th>School</th>
-                    <th>Customer</th>
-                    <th>Amount</th>
-                    <th>Payment</th>
-                    <th>Printed By</th>
-                    <th>Date & Time</th>
-                    <th>Items</th>
-                </tr>
-            </thead>
-            <tbody>
-            <?php foreach($payments as $i => $p): 
-                $items = json_decode($p['items_json'], true) ?? [];
-            ?>
-                <tr>
-                    <td><?=$i+1?></td>
-                    <td><?=htmlspecialchars($p['bill_number'])?></td>
-                    <td><?=htmlspecialchars($p['fiscal_year'])?></td>
-                    <td><?=htmlspecialchars($p['school_name'])?></td>
-                    <td><?=htmlspecialchars($p['customer_name'] ?: 'Walk-in')?></td>
-                    <td><?=number_format($p['advance_amount'],2)?></td>
-                    <td><?=htmlspecialchars($p['payment_method'])?></td>
-                    <td><?=htmlspecialchars($p['printed_by'] ?? '')?></td>
-                    <td><?=htmlspecialchars($p['bs_datetime'])?></td>
-                    <td>
-                        <?php if($items): ?>
-                            <ul class="items-list">
-                                <?php foreach($items as $it): ?>
-                                    <li><?=htmlspecialchars($it['name'])?> (<?=htmlspecialchars($it['size']??'')?>) × <?=$it['quantity']?> -> <?=number_format($it['price'],2)?></li>
-                                <?php endforeach; ?>
-                            </ul>
-                        <?php else: echo '-'; endif; ?>
-                    </td>
-                </tr>
-            <?php endforeach; ?>
-            </tbody>
+            <!-- ... your existing detailed table code ... -->
         </table>
+
+        <!-- Aggregated Items Summary -->
+        <?php if (!empty($aggregatedItems)): ?>
+            <h2>Aggregated Items Summary</h2>
+            <table class="summary-table">
+                <!-- ... your existing aggregated table code ... -->
+            </table>
+        <?php endif; ?>
     <?php endif; ?>
 </div>
 </body>

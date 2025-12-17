@@ -543,7 +543,7 @@ if (isset($_POST['start_new_bill'])) {
         </select>
 
         <button id="saveBillBtn">Save Bill</button>
-        <button id="printBtn">Print</button>
+        <!-- <button id="printBtn">Print</button> -->
         <button id="showQrBtn">Show QR</button>
         <a href="select_items.php">Add More Items</a>
         <form method="POST"  id="newBillForm" style="display:inline;">
@@ -689,6 +689,7 @@ document.getElementById('saveBillBtn')?.addEventListener('click', function() {
 
             if (action === 'advance') {
                 showAlert('Advance Payment Saved Successfully!\nYou can now print the bill.');
+                setTimeout(() => {window.print();}, 500);
             } else {
                 showAlert('Full Payment Completed! Printing...');
                 setTimeout(() => window.print(), 800);
