@@ -1,12 +1,11 @@
 <?php
 session_start();
 require '../Common/connection.php';
-require '../Common/nepali_date.php'; // Now has bs_to_ad()
-require '../vendor/autoload.php'; // PhpSpreadsheet
+require '../Common/nepali_date.php'; // Has ad_to_bs(), bs_to_ad(), nepali_date_time()
+require '../vendor/autoload.php';
 
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
-use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 
 // ==================== SECURITY CHECK ====================
@@ -15,13 +14,25 @@ if (!isset($_SESSION['user_id']) || !isset($_SESSION['role'])) {
     exit();
 }
 
-$user_role   = $_SESSION['role'];
-$outlet_id   = $_SESSION['outlet_id'] ?? null;
+$user_role = $_SESSION['role'];
+$outlet_id = $_SESSION['outlet_id'] ?? null;
+
+// ==================== GET TODAY'S BS DATE ====================
+$today_bs_full = nepali_date_time(); // e.g. '2082-09-02 15:30:00'
+$today_bs_date = explode(' ', $today_bs_full)[0]; // '2082-09-02'
+
+// ==================== DETERMINE FILTER MODE ====================
+$filter_mode = $_GET['filter_mode'] ?? 'today'; // 'today' or 'all'
+
+// For export, use the same mode
+if (isset($_GET['export']) && $_GET['export'] === 'excel') {
+    $use_today_filter = ($filter_mode === 'today');
+} else {
+    $use_today_filter = ($filter_mode === 'today');
+}
 
 // ==================== EXCEL EXPORT ====================
 if (isset($_GET['export']) && $_GET['export'] === 'excel') {
-    $filter_bs = trim($_GET['filter_date'] ?? '');
-
     $where_clause = "WHERE cmi.done = 0";
     $params = [];
 
@@ -30,12 +41,10 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
         $params[] = $outlet_id;
     }
 
-    if ($filter_bs !== '') {
-        $filter_ad = bs_to_ad($filter_bs); // ← Fixed: use bs_to_ad()
-        if ($filter_ad) {
-            $where_clause .= " AND DATE(cm.created_at) = ?";
-            $params[] = $filter_ad;
-        }
+    if ($use_today_filter) {
+        $today_ad = date('Y-m-d'); // Current AD date
+        $where_clause .= " AND DATE(cm.created_at) = ?";
+        $params[] = $today_ad;
     }
 
     $sql = "
@@ -44,7 +53,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
             cm.fiscal_year,
             cm.customer_name,
             cm.phone,
-            cm.created_at AS bill_date,
+            cm.created_at AS bill_date_ad,
             cmi.item_name,
             cmi.price AS unit_price,
             cmi.quantity,
@@ -66,7 +75,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $sheet = $spreadsheet->getActiveSheet();
     $sheet->setTitle('Pending Measurements');
 
-    $headers = ['S.N', 'Bill No.', 'Fiscal Year', 'Customer', 'Phone', 'Item Name', 'Qty', 'Unit Price', 'Total', 'Branch', 'Date (AD)', 'Measurements'];
+    $headers = ['S.N', 'Bill No.', 'Fiscal Year', 'Customer', 'Phone', 'Item Name', 'Qty', 'Unit Price', 'Total', 'Branch', 'Date (BS)', 'Measurements'];
     $col = 'A';
     foreach ($headers as $h) $sheet->setCellValue($col++ . '1', $h);
 
@@ -78,9 +87,10 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $grand_total = 0;
 
     foreach ($rows as $r) {
-        $measurements = json_decode($r['measurement_json'], true);
+        $bs_date = ad_to_bs(date('Y-m-d', strtotime($r['bill_date_ad'])));
+        $measurements = json_decode($r['measurement_json'], true) ?? [];
         $measText = '';
-        if (is_array($measurements)) {
+        if (!empty($measurements)) {
             foreach ($measurements as $k => $v) {
                 $k = ucwords(str_replace('_', ' ', $k));
                 $measText .= "$k: $v | ";
@@ -100,7 +110,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
         $sheet->setCellValue('H' . $row, $r['unit_price']);
         $sheet->setCellValue('I' . $row, $r['total_amount']);
         $sheet->setCellValue('J' . $row, $r['branch_name'] ?? 'Unknown');
-        $sheet->setCellValue('K' . $row, date('Y-m-d H:i', strtotime($r['bill_date'])));
+        $sheet->setCellValue('K' . $row, $bs_date);
         $sheet->setCellValue('L' . $row, $measText);
 
         $grand_total += $r['total_amount'];
@@ -111,12 +121,12 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $sheet->setCellValue('I' . $row, $grand_total);
     $sheet->getStyle('H' . $row . ':I' . $row)->getFont()->setBold(true)->setSize(13);
     $sheet->getStyle('H2:I' . $row)->getNumberFormat()->setFormatCode('#,##0.00');
-    $sheet->getStyle('H2:I' . $row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
 
     foreach (range('A', 'L') as $c) $sheet->getColumnDimension($c)->setAutoSize(true);
     $sheet->getColumnDimension('L')->setWidth(80);
 
-    $filename = "Pending_Measurements_" . ($filter_bs ?: 'All') . ".xlsx";
+    $title = $use_today_filter ? "Today_" . $today_bs_date : "All_Pending";
+    $filename = "Pending_Measurements_" . $title . ".xlsx";
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     header('Content-Disposition: attachment; filename="' . $filename . '"');
     header('Cache-Control: max-age=0');
@@ -125,26 +135,26 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     exit;
 }
 
-// ==================== HANDLE MARK AS DONE ====================
+// ==================== MARK AS DONE ====================
 if (isset($_GET['done']) && $_GET['done'] != '') {
     $item_id = (int)$_GET['done'];
-    
-    if ($user_role === 'staff' && $outlet_id !== null) {
-        $stmt = $pdo->prepare("UPDATE custom_measurement_items SET done = 1 WHERE id = ? AND outlet_id = ?");
-        $stmt->execute([$item_id, $outlet_id]);
-    } else {
-        $stmt = $pdo->prepare("UPDATE custom_measurement_items SET done = 1 WHERE id = ?");
-        $stmt->execute([$item_id]);
+    try {
+        if ($user_role === 'staff' && $outlet_id !== null) {
+            $stmt = $pdo->prepare("UPDATE custom_measurement_items SET done = 1 WHERE id = ? AND outlet_id = ?");
+            $stmt->execute([$item_id, $outlet_id]);
+        } else {
+            $stmt = $pdo->prepare("UPDATE custom_measurement_items SET done = 1 WHERE id = ?");
+            $stmt->execute([$item_id]);
+        }
+        $mode_param = $filter_mode === 'all' ? '?filter_mode=all' : '';
+        echo "<script>alert('Item marked as completed!'); window.location='measurement.php$mode_param';</script>";
+    } catch (Exception $e) {
+        echo "<script>alert('Error updating item.');</script>";
     }
-    
-    $filter_param = isset($_GET['filter_date']) ? '&filter_date=' . urlencode($_GET['filter_date']) : '';
-    echo "<script>alert('Item marked as completed!'); window.location='measurement.php$filter_param';</script>";
     exit;
 }
 
-// ==================== SINGLE DATE FILTER ====================
-$filter_bs = trim($_GET['filter_date'] ?? '');
-
+// ==================== QUERY WITH FILTER ====================
 $where_clause = "WHERE cmi.done = 0";
 $params = [];
 
@@ -153,12 +163,10 @@ if ($user_role === 'staff' && $outlet_id !== null) {
     $params[] = $outlet_id;
 }
 
-if ($filter_bs !== '') {
-    $filter_ad = bs_to_ad($filter_bs); // ← Fixed: use bs_to_ad()
-    if ($filter_ad) {
-        $where_clause .= " AND DATE(cm.created_at) = ?";
-        $params[] = $filter_ad;
-    }
+if ($filter_mode === 'today') {
+    $today_ad = date('Y-m-d'); // Current AD date (server time)
+    $where_clause .= " AND DATE(cm.created_at) = ?";
+    $params[] = $today_ad;
 }
 
 $sql = "
@@ -167,7 +175,7 @@ $sql = "
         cm.fiscal_year,
         cm.customer_name,
         cm.phone,
-        cm.created_at AS bill_date,
+        cm.created_at AS bill_date_ad,
         cmi.id AS item_id,
         cmi.item_index,
         cmi.item_name,
@@ -177,9 +185,7 @@ $sql = "
         JSON_EXTRACT(cm.measurements, CONCAT('$.\"', cmi.item_index, '\"')) AS measurement_json,
         cmi.outlet_id
     FROM customer_measurements cm
-    JOIN custom_measurement_items cmi 
-        ON cm.bill_number = cmi.bill_number 
-        AND cm.fiscal_year = cmi.fiscal_year
+    JOIN custom_measurement_items cmi ON cm.bill_number = cmi.bill_number AND cm.fiscal_year = cmi.fiscal_year
     $where_clause
     ORDER BY cm.created_at DESC, cm.bill_number DESC, cmi.item_index
 ";
@@ -219,38 +225,33 @@ $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
         <?php endif; ?>
     </h1>
 
-    <!-- Single Date Filter + Export -->
+    <!-- Filter Options + Export -->
     <div class="filter-form text-center">
-        <form method="GET" class="row g-3 justify-content-center align-items-end">
-            <div class="col-md-4">
-                <label class="form-label fw-bold">Filter by BS Date</label>
-                <input type="text" name="filter_date" class="form-control form-control-lg text-center" 
-                       placeholder="e.g. 2082-09-02" value="<?=htmlspecialchars($filter_bs)?>">
-                <small class="text-muted">Leave empty to show all pending</small>
-            </div>
-            <div class="col-md-2">
-                <button type="submit" class="btn btn-primary btn-lg w-100">Apply Filter</button>
-            </div>
-            <div class="col-md-2">
-                <a href="measurement.php" class="btn btn-secondary btn-lg w-100">Clear</a>
-            </div>
+        <form method="GET" class="d-inline">
+            <button type="submit" name="filter_mode" value="today" class="btn <?= $filter_mode === 'today' ? 'btn-primary' : 'btn-outline-primary' ?> btn-lg mx-2">
+                Today (<?= $today_bs_date ?>)
+            </button>
+            <button type="submit" name="filter_mode" value="all" class="btn <?= $filter_mode === 'all' ? 'btn-primary' : 'btn-outline-primary' ?> btn-lg mx-2">
+                All Time
+            </button>
         </form>
 
         <div class="mt-4">
-            <a href="measurement.php?export=excel<?php 
-                echo $filter_bs ? '&filter_date=' . htmlentities($filter_bs) : '';
-            ?>" class="btn btn-success btn-lg px-5">
+            <a href="measurement.php?export=excel&filter_mode=<?= $filter_mode ?>" class="btn btn-success btn-lg px-5">
                 <i class="fas fa-file-excel"></i> Export to Excel
             </a>
         </div>
     </div>
 
     <?php if (empty($rows)): ?>
-        <div class="alert alert-success text-center fs-2">All orders completed!</div>
+        <div class="alert alert-success text-center fs-2 mt-5">
+            <i class="fas fa-check-circle"></i> All orders completed!
+        </div>
     <?php else: 
         $current_bill = null;
         foreach ($rows as $row): 
-            $measurements = json_decode($row['measurement_json'], true);
+            $bs_date_str = ad_to_bs(date('Y-m-d', strtotime($row['bill_date_ad'])));
+            $measurements = json_decode($row['measurement_json'], true) ?? [];
 
             $branch_name = '';
             if ($user_role === 'admin') {
@@ -271,7 +272,7 @@ $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     echo "<span class='branch-badge badge bg-light text-dark'>Branch: " . htmlspecialchars($branch_name) . "</span>";
                 }
                 echo "</div>";
-                echo "<small>" . date('d M Y, h:i A', strtotime($row['bill_date'])) . "</small>";
+                echo "<small>BS Date: <strong>{$bs_date_str}</strong></small>";
                 echo "</div>";
                 echo "<div class='card-body'>";
                 echo "<h4 class='text-success'>Customer: <strong>" . htmlspecialchars($row['customer_name']) . "</strong>";
@@ -279,13 +280,13 @@ $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 echo "</h4><hr>";
             endif;
 
-            echo "<div class='row align-items-center mb-3 p-3 bg-light rounded position-relative border-start border-success border-4'>";
+            echo "<div class='row align-items-center mb-3 p-3 bg-light rounded border-start border-success border-4'>";
             echo "<div class='col-lg-8'>";
             echo "<h5 class='text-success fw-bold mb-2'>" . htmlspecialchars($row['item_name']) . "</h5>";
             echo "<p class='mb-2'><strong>Price:</strong> NPR " . number_format($row['unit_price'], 2) . 
                  " × {$row['quantity']} = <strong class='text-success fs-5'>NPR " . number_format($row['total_amount'], 2) . "</strong></p>";
 
-            if (is_array($measurements) && !empty($measurements)) {
+            if (!empty($measurements)) {
                 foreach ($measurements as $field => $value) {
                     $field = ucwords(str_replace('_', ' ', $field));
                     echo "<span class='measurement-item'><strong>$field:</strong> " . htmlspecialchars($value) . "</span> ";
@@ -296,7 +297,7 @@ $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
             echo "</div>";
 
             echo "<div class='col-lg-4 text-end'>";
-            echo "<a href='?done={$row['item_id']}" . ($filter_bs ? "&filter_date=" . urlencode($filter_bs) : '') . "' 
+            echo "<a href='?done={$row['item_id']}&filter_mode=" . $filter_mode . "' 
                      class='btn btn-success btn-lg done-btn shadow'
                      onclick=\"return confirm('Mark « " . htmlspecialchars($row['item_name']) . " » as completed?')\">
                      Done
