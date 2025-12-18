@@ -57,7 +57,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $outlet_id = $_SESSION['outlet_id'] ?? 0;
 
     $sql = "SELECT ap.bill_number, ap.bs_datetime, ap.customer_name, ap.advance_amount, ap.total,
-            (ap.total - ap.advance_amount) AS remaining, ap.payment_method,
+            (ap.total - ap.advance_amount) AS remaining, ap.payment_method, ap.items_json,
             o.location AS branch_name
             FROM advance_payment ap
             LEFT JOIN outlets o ON ap.outlet_id = o.outlet_id
@@ -86,12 +86,24 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $stmt->execute($params);
     $advances = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+    // Prepare items text for Excel
+    foreach ($advances as &$adv) {
+        $items = json_decode($adv['items_json'] ?? '', true) ?? [];
+        $itemsText = '';
+        foreach ($items as $it) {
+            $itemsText .= ($it['name'] ?? '') . ' (' . ($it['size'] ?? 'N/A') . ') ×' .
+                          ($it['quantity'] ?? 0) . ' @ ' . number_format($it['price'] ?? 0, 2) . "\n";
+        }
+        $adv['items_text'] = $itemsText ?: '';
+    }
+    unset($adv);
+
     $spreadsheet = new Spreadsheet();
     $sheet = $spreadsheet->getActiveSheet();
     $sheet->setTitle('Advance Payments');
 
-    // Headers
-    $headers = ['S.N', 'Bill No.', 'Date (BS)', 'Customer', 'Advance Amount', 'Total Bill', 'Remaining', 'Payment Method', 'Branch'];
+    // Headers (Items column added)
+    $headers = ['S.N', 'Bill No.', 'Date (BS)', 'Customer', 'Advance Amount', 'Total Bill', 'Remaining', 'Payment Method', 'Branch', 'Items'];
     $col = 'A';
     foreach ($headers as $h) {
         $sheet->setCellValue($col . '1', $h);
@@ -99,8 +111,8 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     }
 
     // Header styling
-    $sheet->getStyle('A1:I1')->getFont()->setBold(true)->setSize(12);
-    $sheet->getStyle('A1:I1')->getFill()
+    $sheet->getStyle('A1:J1')->getFont()->setBold(true)->setSize(12);
+    $sheet->getStyle('A1:J1')->getFill()
         ->setFillType(Fill::FILL_SOLID)
         ->getStartColor()->setARGB('FF667eea');
 
@@ -122,6 +134,8 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
         $sheet->setCellValue('G' . $row, $remaining);
         $sheet->setCellValue('H' . $row, $payment);
         $sheet->setCellValue('I' . $row, $adv['branch_name'] ?? 'Unknown');
+        $sheet->setCellValue('J' . $row, $adv['items_text']);
+        $sheet->getStyle('J' . $row)->getAlignment()->setWrapText(true);
 
         $grand_advance += $adv['advance_amount'];
         $grand_total += $adv['total'];
@@ -135,15 +149,16 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $sheet->setCellValue('E' . $row, $grand_advance);
     $sheet->setCellValue('F' . $row, $grand_total);
     $sheet->setCellValue('G' . $row, $grand_remaining);
-    $sheet->getStyle('D' . $row . ':I' . $row)->getFont()->setBold(true)->setSize(13);
+    $sheet->getStyle('D' . $row . ':J' . $row)->getFont()->setBold(true)->setSize(13);
     $sheet->getStyle('E' . $row . ':G' . $row)->getNumberFormat()->setFormatCode('#,##0.00');
 
     // Formatting
     $sheet->getStyle('E2:G' . ($row))->getNumberFormat()->setFormatCode('#,##0.00');
     $sheet->getStyle('E2:G' . $row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
-    foreach (range('A', 'I') as $c) {
+    foreach (range('A', 'J') as $c) {
         $sheet->getColumnDimension($c)->setAutoSize(true);
     }
+    $sheet->getColumnDimension('J')->setWidth(60);
     $sheet->freezePane('A2');
 
     // Download
@@ -190,6 +205,20 @@ $sql .= " ORDER BY ap.id DESC";
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $advances = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Prepare items display for HTML
+foreach ($advances as &$adv) {
+    $items = json_decode($adv['items_json'] ?? '', true) ?? [];
+    $itemsText = '';
+    foreach ($items as $it) {
+        $itemsText .= htmlspecialchars($it['name'] ?? '') .
+                      ' (' . htmlspecialchars($it['size'] ?? 'N/A') . ') × ' .
+                      ($it['quantity'] ?? 0) . ' @ ' .
+                      number_format($it['price'] ?? 0, 2) . "<br>";
+    }
+    $adv['items_display'] = $itemsText ?: '-';
+}
+unset($adv);
 ?>
 
 <!DOCTYPE html>
@@ -330,6 +359,7 @@ $advances = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <th>Remaining</th>
                 <th>Payment Method</th>
                 <th>Branch</th>
+                <th>Items</th>
                 <th>Action</th>
             </tr>
             </thead>
@@ -351,6 +381,9 @@ $advances = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     </td>
                     <td data-label="Payment Method" class="payment"><?php echo $payment; ?></td>
                     <td data-label="Branch"><?php echo htmlspecialchars($row['branch_name'] ?? 'Unknown'); ?></td>
+                    <td data-label="Items" style="font-size:0.9rem;">
+                        <?= $row['items_display'] ?>
+                    </td>
                     <td data-label="Action">
                         <form method="POST" style="display:inline;">
                             <input type="hidden" name="complete_bill" value="1">
@@ -370,7 +403,7 @@ $advances = $stmt->fetchAll(PDO::FETCH_ASSOC);
     </div>
 </div>
 
-<!-- Modal (unchanged) -->
+<!-- Modal -->
 <div id="exchangeModal" class="modal">
     <div class="modal-content">
         <span class="close" onclick="closeModal()">&times;</span>

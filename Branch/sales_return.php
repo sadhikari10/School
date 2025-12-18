@@ -38,19 +38,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['exchange_return'])) {
 
 // ============= EXCEL EXPORT LOGIC =============
 if (isset($_GET['export']) && $_GET['export'] === 'excel') {
-    $search_bill     = trim($_GET['bill'] ?? '');
-    $search_customer = trim($_GET['customer'] ?? '');
-    $search_date     = trim($_GET['date'] ?? '');
-    $search_payment  = trim($_GET['payment_method'] ?? '');
-    $outlet_id       = $_SESSION['outlet_id'] ?? 0;
+    $search_bill            = trim($_GET['bill'] ?? '');
+    $search_customer        = trim($_GET['customer'] ?? '');
+    $search_date            = trim($_GET['date'] ?? '');
+    $search_payment         = trim($_GET['payment_method'] ?? '');
+    $search_advance_payment = trim($_GET['advance_payment_method'] ?? '');
+    $outlet_id              = $_SESSION['outlet_id'] ?? 0;
 
     $sql = "SELECT 
                 s.bill_number,
-                s.bs_datetime,
+                DATE(s.bs_datetime) as bs_date,
                 s.customer_name,
                 s.school_name,
                 s.total,
-                s.payment_method
+                s.advance_amount,
+                s.final_amount,
+                s.payment_method,
+                s.advance_payment_method,
+                s.items_json
             FROM sales s
             WHERE s.printed_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
               AND s.exchange_status = 'original'
@@ -67,12 +72,16 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
         $params[] = "%$search_customer%";
     }
     if ($search_date !== '') {
-        $sql .= " AND s.bs_datetime LIKE ?";
-        $params[] = "$search_date%";
+        $sql .= " AND DATE(s.bs_datetime) = ?";
+        $params[] = $search_date;
     }
     if ($search_payment !== '') {
         $sql .= " AND s.payment_method = ?";
         $params[] = $search_payment;
+    }
+    if ($search_advance_payment !== '') {
+        $sql .= " AND s.advance_payment_method = ?";
+        $params[] = $search_advance_payment;
     }
 
     $sql .= " ORDER BY s.printed_at DESC";
@@ -81,54 +90,76 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $stmt->execute($params);
     $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+    // Prepare items text for Excel
+    foreach ($sales as &$s) {
+        $items = json_decode($s['items_json'] ?? '', true) ?? [];
+        $itemsText = '';
+        foreach ($items as $it) {
+            $itemsText .= ($it['name'] ?? '') . ' (' . ($it['size'] ?? 'N/A') . ') ×' .
+                          ($it['quantity'] ?? 0) . ' @ ' . number_format($it['price'] ?? 0, 2) . "\n";
+        }
+        $s['items_text'] = $itemsText ?: '';
+    }
+    unset($s);
+
     $spreadsheet = new Spreadsheet();
     $sheet = $spreadsheet->getActiveSheet();
     $sheet->setTitle('Exchange Return Sales');
 
-    // Headers
-    $headers = ['S.N', 'Bill No.', 'Date (BS)', 'Customer', 'School', 'Total Amount', 'Payment Method'];
+    // Headers (Items column added)
+    $headers = ['S.N', 'Bill No.', 'Date (BS)', 'Customer', 'School', 'Total', 'Advance Amt', 'Final Amt', 'Final Pay', 'Adv. Pay Method', 'Items'];
     $col = 'A';
     foreach ($headers as $h) {
-        $sheet->setCellValue($col . '1', $h);
-        $col++;
+        $sheet->setCellValue($col++ . '1', $h);
     }
 
     // Header styling
-    $sheet->getStyle('A1:G1')->getFont()->setBold(true)->setSize(12);
-    $sheet->getStyle('A1:G1')->getFill()
+    $sheet->getStyle('A1:K1')->getFont()->setBold(true)->setSize(12);
+    $sheet->getStyle('A1:K1')->getFill()
         ->setFillType(Fill::FILL_SOLID)
         ->getStartColor()->setARGB('FF8e44ad');
 
-    // Data
+    // Data + Grand Totals
     $row = 2;
     $sn = 1;
-    $grand_total = 0;
+    $grand_total = $grand_advance = $grand_final = 0;
 
     foreach ($sales as $s) {
+        $advance_amt = $s['advance_amount'] > 0 ? $s['advance_amount'] : 0;
+
         $sheet->setCellValue('A' . $row, $sn++);
         $sheet->setCellValue('B' . $row, $s['bill_number']);
-        $sheet->setCellValue('C' . $row, $s['bs_datetime']);
+        $sheet->setCellValue('C' . $row, $s['bs_date']);
         $sheet->setCellValue('D' . $row, $s['customer_name'] ?: 'Walk-in');
         $sheet->setCellValue('E' . $row, $s['school_name']);
         $sheet->setCellValue('F' . $row, $s['total']);
-        $sheet->setCellValue('G' . $row, ucfirst($s['payment_method']));
+        $sheet->setCellValue('G' . $row, $advance_amt);
+        $sheet->setCellValue('H' . $row, $s['final_amount']);
+        $sheet->setCellValue('I' . $row, ucfirst($s['payment_method'] ?? ''));
+        $sheet->setCellValue('J' . $row, $s['advance_payment_method'] ? ucfirst($s['advance_payment_method']) : '-');
+        $sheet->setCellValue('K' . $row, $s['items_text']);
+        $sheet->getStyle('K' . $row)->getAlignment()->setWrapText(true);
 
-        $grand_total += $s['total'];
+        $grand_total   += $s['total'];
+        $grand_advance += $advance_amt;
+        $grand_final   += $s['final_amount'];
         $row++;
     }
 
-    // Grand Total
+    // Grand Total Row
     $sheet->setCellValue('E' . $row, 'GRAND TOTAL');
     $sheet->setCellValue('F' . $row, $grand_total);
-    $sheet->getStyle('E' . $row . ':F' . $row)->getFont()->setBold(true)->setSize(13);
-    $sheet->getStyle('F2:F' . $row)->getNumberFormat()->setFormatCode('#,##0.00');
-    $sheet->getStyle('F' . $row)->getNumberFormat()->setFormatCode('#,##0.00');
-    $sheet->getStyle('F2:F' . $row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+    $sheet->setCellValue('G' . $row, $grand_advance);
+    $sheet->setCellValue('H' . $row, $grand_final);
+    $sheet->getStyle('E' . $row . ':H' . $row)->getFont()->setBold(true)->setSize(13);
+    $sheet->getStyle('F2:H' . $row)->getNumberFormat()->setFormatCode('#,##0.00');
+    $sheet->getStyle('F2:H' . $row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
 
     // Auto-size columns
-    foreach (range('A', 'G') as $c) {
+    foreach (range('A', 'K') as $c) {
         $sheet->getColumnDimension($c)->setAutoSize(true);
     }
+    $sheet->getColumnDimension('K')->setWidth(60);
 
     $sheet->freezePane('A2');
 
@@ -143,19 +174,24 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
 }
 
 // ============= NORMAL DISPLAY LOGIC =============
-$search_bill     = trim($_GET['bill'] ?? '');
-$search_customer = trim($_GET['customer'] ?? '');
-$search_date     = trim($_GET['date'] ?? '');
-$search_payment  = trim($_GET['payment_method'] ?? '');
-$outlet_id       = $_SESSION['outlet_id'] ?? 0;
+$search_bill            = trim($_GET['bill'] ?? '');
+$search_customer        = trim($_GET['customer'] ?? '');
+$search_date            = trim($_GET['date'] ?? '');
+$search_payment         = trim($_GET['payment_method'] ?? '');
+$search_advance_payment = trim($_GET['advance_payment_method'] ?? '');
+$outlet_id              = $_SESSION['outlet_id'] ?? 0;
 
 $sql = "SELECT 
             s.bill_number,
+            DATE(s.bs_datetime) as bs_date,
             s.customer_name,
             s.school_name,
             s.total,
+            s.advance_amount,
+            s.final_amount,
             s.payment_method,
-            s.bs_datetime
+            s.advance_payment_method,
+            s.items_json
         FROM sales s
         WHERE s.printed_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
           AND s.exchange_status = 'original'
@@ -172,12 +208,16 @@ if ($search_customer !== '') {
     $params[] = "%$search_customer%";
 }
 if ($search_date !== '') {
-    $sql .= " AND s.bs_datetime LIKE ?";
-    $params[] = "$search_date%";
+    $sql .= " AND DATE(s.bs_datetime) = ?";
+    $params[] = $search_date;
 }
 if ($search_payment !== '') {
     $sql .= " AND s.payment_method = ?";
     $params[] = $search_payment;
+}
+if ($search_advance_payment !== '') {
+    $sql .= " AND s.advance_payment_method = ?";
+    $params[] = $search_advance_payment;
 }
 
 $sql .= " ORDER BY s.printed_at DESC";
@@ -185,6 +225,20 @@ $sql .= " ORDER BY s.printed_at DESC";
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Prepare items display for HTML
+foreach ($sales as &$s) {
+    $items = json_decode($s['items_json'] ?? '', true) ?? [];
+    $itemsText = '';
+    foreach ($items as $it) {
+        $itemsText .= htmlspecialchars($it['name'] ?? '') .
+                      ' (' . htmlspecialchars($it['size'] ?? 'N/A') . ') × ' .
+                      ($it['quantity'] ?? 0) . ' @ ' .
+                      number_format($it['price'] ?? 0, 2) . "<br>";
+    }
+    $s['items_display'] = $itemsText ?: '-';
+}
+unset($s);
 ?>
 
 <!DOCTYPE html>
@@ -203,7 +257,7 @@ $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
         min-height:100vh;
     }
     .container{
-        max-width:1200px;
+        max-width:1300px;
         margin:30px auto;
         background:rgba(255,255,255,0.98);
         border-radius:20px;
@@ -229,115 +283,84 @@ $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
     .search-bar{
         padding:25px;
         background:#f8f1ff;
+    }
+    .search-bar form{
         display:flex;
         flex-wrap:wrap;
-        gap:15px;
+        gap:12px;
+        align-items:end;
         justify-content:center;
-        align-items:center;
     }
-    .search-bar input, .search-bar select{
-        padding:14px 18px;
-        border:2px solid #ddd;
-        border-radius:12px;
-        width:220px;
+    .search-bar input,
+    .search-bar select{
+        padding:12px 14px;
+        border-radius:8px;
+        border:1px solid #ddd;
         font-size:1rem;
-        transition:all 0.3s;
-    }
-    .search-bar input:focus, .search-bar select:focus{
-        outline:none;
-        border-color:#8e44ad;
-        box-shadow:0 0 0 4px rgba(142,68,173,0.2);
+        min-width:160px;
     }
     .search-bar button{
-        padding:14px 28px;
+        padding:12px 24px;
         background:#8e44ad;
-        color:#fff;
+        color:white;
         border:none;
-        border-radius:12px;
-        font-weight:600;
+        border-radius:8px;
         cursor:pointer;
-        transition:all 0.3s;
-    }
-    .search-bar button:hover{
-        background:#732d91;
-        transform:translateY(-2px);
+        font-weight:bold;
     }
     .clear-btn{
-        background:#95a5a6 !important;
+        background:#e74c3c !important;
+        margin-left:8px;
     }
-    .clear-btn:hover{
-        background:#7f8c8d !important;
-    }
-
-    .actions {
-        text-align: center;
-        padding: 15px;
-        background: #f8f1ff;
-    }
-    .export-btn {
-        display: inline-block;
-        padding: 14px 32px;
-        background: #27ae60;
-        color: white;
-        text-decoration: none;
-        border-radius: 50px;
-        font-weight: 600;
-        font-size: 1rem;
-        box-shadow: 0 6px 20px rgba(39,174,96,0.3);
-        transition: all 0.3s;
-    }
-    .export-btn:hover {
-        background: #219653;
-        transform: translateY(-3px);
-        box-shadow: 0 10px 30px rgba(39,174,96,0.4);
-    }
-
     table{
         width:100%;
         border-collapse:collapse;
+        margin-top:20px;
+        background:white;
+    }
+    th, td{
+        padding:10px 8px;
+        border:1px solid #ddd;
+        text-align:left;
+        font-size:0.95rem;
+        vertical-align:middle;
     }
     th{
         background:#8e44ad;
-        color:#fff;
-        padding:18px 15px;
-        text-align:left;
+        color:white;
+    }
+    .numeric, .amount{
+        text-align:right;
         font-weight:600;
-        position:sticky;
-        top:0;
-        z-index:10;
-    }
-    td{
-        padding:16px 15px;
-        border-bottom:1px solid #eee;
-    }
-    tr:hover{
-        background:#f8f1ff;
-    }
-    .amount{
-        font-weight:700;
-        color:#27ae60;
     }
     .action-btn{
-        background:#8e44ad;
-        color:#fff;
-        padding:11px 22px;
+        padding:8px 14px;
+        background:#e67e22;
+        color:white;
         border:none;
-        border-radius:50px;
+        border-radius:6px;
         cursor:pointer;
-        font-weight:600;
-        transition:all 0.3s;
-        box-shadow:0 4px 15px rgba(142,68,173,0.3);
+        font-size:0.9rem;
     }
     .action-btn:hover{
-        background:#732d91;
-        transform:scale(1.05);
-        box-shadow:0 8px 25px rgba(142,68,173,0.4);
+        background:#d35400;
     }
-    .no-data{
-        padding:120px 20px;
+    .actions{
         text-align:center;
-        color:#95a5a6;
-        font-size:1.5rem;
+        margin:30px 0;
+    }
+    .export-btn{
+        display:inline-block;
+        padding:14px 32px;
+        background:#27ae60;
+        color:white;
+        border-radius:50px;
+        text-decoration:none;
+        font-weight:bold;
+        box-shadow:0 8px 20px rgba(39,174,96,0.3);
+    }
+    .export-btn:hover{
+        background:#219a52;
     }
     .back-btn{
         display:block;
@@ -358,7 +381,6 @@ $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
         background:#732d91;
         transform:translateY(-3px);
     }
-
     .success-msg{
         padding:18px;
         background:#d5f4e6;
@@ -369,7 +391,12 @@ $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
         margin:20px;
         border-left:6px solid #27ae60;
     }
-
+    .no-data{
+        text-align:center;
+        padding:60px;
+        color:#8e44ad;
+        font-size:1.2rem;
+    }
     .modal{
         display:none;
         position:fixed;
@@ -465,18 +492,22 @@ $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
         <form method="GET">
             <input type="text" name="bill" placeholder="Bill Number" value="<?=htmlspecialchars($search_bill)?>">
             <input type="text" name="customer" placeholder="Customer Name" value="<?=htmlspecialchars($search_customer)?>">
-            <input type="text" name="date" placeholder="BS Date (2082-08-21)" value="<?=htmlspecialchars($search_date)?>">
+            <input type="text" name="date" placeholder="BS Date (YYYY-MM-DD)" value="<?=htmlspecialchars($search_date)?>">
             <select name="payment_method">
-                <option value="">All Payment Methods</option>
+                <option value="">All Final Payment</option>
                 <option value="cash" <?= $search_payment === 'cash' ? 'selected' : '' ?>>Cash</option>
                 <option value="online" <?= $search_payment === 'online' ? 'selected' : '' ?>>Online</option>
+            </select>
+            <select name="advance_payment_method">
+                <option value="">All Advance Payment</option>
+                <option value="cash" <?= $search_advance_payment === 'cash' ? 'selected' : '' ?>>Cash (Advance)</option>
+                <option value="online" <?= $search_advance_payment === 'online' ? 'selected' : '' ?>>Online (Advance)</option>
             </select>
             <button type="submit">Search</button>
             <a href="sales_return.php"><button type="button" class="clear-btn">Clear</button></a>
         </form>
     </div>
 
-    <!-- Export Button -->
     <div class="actions">
         <a href="sales_return.php?export=excel<?php 
             $query = $_SERVER['QUERY_STRING'] ?? '';
@@ -489,7 +520,7 @@ $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
     <?php if (empty($sales)): ?>
         <div class="no-data">
             <i class="fas fa-receipt fa-3x" style="color:#8e44ad;margin-bottom:20px;"></i><br>
-            No sales found in the last 7 days.
+            No eligible sales found in the last 7 days.
         </div>
     <?php else: ?>
         <table>
@@ -500,8 +531,12 @@ $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <th>Date (BS)</th>
                     <th>Customer</th>
                     <th>School</th>
-                    <th>Total</th>
-                    <th>Payment</th>
+                    <th class="numeric">Total</th>
+                    <th class="numeric">Advance</th>
+                    <th class="numeric">Final</th>
+                    <th>Final Pay</th>
+                    <th>Adv. Pay</th>
+                    <th>Items</th>
                     <th>Action</th>
                 </tr>
             </thead>
@@ -510,11 +545,17 @@ $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <tr>
                     <td><?= $i + 1 ?></td>
                     <td><strong>#<?= htmlspecialchars($s['bill_number']) ?></strong></td>
-                    <td><?= htmlspecialchars($s['bs_datetime']) ?></td>
+                    <td><?= htmlspecialchars($s['bs_date']) ?></td>
                     <td><?= htmlspecialchars($s['customer_name'] ?: 'Walk-in') ?></td>
                     <td><?= htmlspecialchars($s['school_name']) ?></td>
-                    <td class="amount">Rs. <?= number_format($s['total']) ?></td>
-                    <td><?= ucfirst($s['payment_method']) ?></td>
+                    <td class="numeric">Rs. <?= number_format($s['total'], 2) ?></td>
+                    <td class="numeric">Rs. <?= number_format($s['advance_amount'] > 0 ? $s['advance_amount'] : 0, 2) ?></td>
+                    <td class="numeric">Rs. <?= number_format($s['final_amount'], 2) ?></td>
+                    <td><?= ucfirst($s['payment_method'] ?? '') ?></td>
+                    <td><?= $s['advance_payment_method'] ? ucfirst($s['advance_payment_method']) : '-' ?></td>
+                    <td style="font-size:0.9rem;">
+                        <?= $s['items_display'] ?>
+                    </td>
                     <td>
                         <button class="action-btn" onclick="openModal('<?= $s['bill_number'] ?>')">
                             Exchange/Return
