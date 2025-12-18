@@ -19,7 +19,7 @@ $outlet_id   = $_SESSION['selected_outlet_id'];
 $outlet_name = $_SESSION['selected_outlet_name'] ?? 'Unknown Outlet';
 
 // =============================================
-// EXCEL EXPORT LOGIC (NOW FULLY WORKING + AGGREGATED ITEMS)
+// EXCEL EXPORT LOGIC (FULLY WORKING + AGGREGATED ITEMS)
 // =============================================
 if (isset($_GET['export']) && $_GET['export'] === 'excel') {
 
@@ -99,7 +99,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $sheet = $spreadsheet->getActiveSheet();
     $sheet->setTitle('Advance Payments');
 
-    // ---------- Detailed Section ----------
+    // Detailed Section
     $headers = ['S.N', 'Bill Number', 'Fiscal Year', 'School', 'Customer', 'Advance', 'Total Bill', 'Remaining', 'Payment', 'Printed By', 'Date & Time', 'Items'];
     $col = 'A';
     foreach ($headers as $h) $sheet->setCellValue($col++ . '1', $h);
@@ -143,7 +143,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $sheet->getStyle('F2:H' . $row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
     $row += 2;
 
-    // ---------- Aggregated Items Section ----------
+    // Aggregated Items Section
     if (!empty($aggregatedItems)) {
         $sheet->setCellValue('A' . $row, 'AGGREGATED ITEM SUMMARY');
         $sheet->getStyle('A' . $row)->getFont()->setBold(true)->setSize(14);
@@ -197,7 +197,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
 }
 
 // =============================================
-// NORMAL DISPLAY LOGIC (with aggregated items)
+// NORMAL DISPLAY LOGIC
 // =============================================
 $params = [$outlet_id];
 $filters = ["status = 'unpaid'"];
@@ -231,7 +231,7 @@ $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $payments = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Grand totals
+// Grand totals for display
 $grand_advance = $grand_total = $grand_remaining = 0;
 foreach ($payments as $p) {
     $grand_advance += $p['advance_amount'];
@@ -239,7 +239,7 @@ foreach ($payments as $p) {
     $grand_remaining += ($p['total'] - $p['advance_amount']);
 }
 
-// Aggregate items
+// Aggregate items for display
 $aggregatedItems = [];
 foreach ($payments as $p) {
     $rawItems = json_decode($p['items_json'], true) ?? [];
@@ -280,11 +280,10 @@ foreach ($payments as $p) {
 <title>Advance Payments (Unpaid) - <?php echo htmlspecialchars($outlet_name); ?></title>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
 <style>
-    /* Your existing styles (unchanged) */
     body{font-family:'Segoe UI',sans-serif;padding:20px;background:#f4f6f9;}
     .container{max-width:1400px;margin:0 auto;}
     h1{color:#2c3e50;text-align:center;margin-bottom:20px;}
-    h2{color:#27ae60;margin-top:50px;}
+    h2{color:#27ae60;margin-top:50px;text-align:center;}
     .actions{text-align:center;margin:25px 0;}
     .btn{padding:12px 32px;margin:0 10px;border-radius:50px;color:white;text-decoration:none;font-weight:bold;}
     .btn-excel{background:#e67e22;}
@@ -334,14 +333,96 @@ foreach ($payments as $p) {
     <?php else: ?>
         <!-- Detailed Table -->
         <table>
-            <!-- ... your existing detailed table code ... -->
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Bill Number</th>
+                    <th>Fiscal Year</th>
+                    <th>School</th>
+                    <th>Customer</th>
+                    <th class="numeric">Advance</th>
+                    <th class="numeric">Total Bill</th>
+                    <th class="numeric">Remaining</th>
+                    <th>Payment</th>
+                    <th>Printed By</th>
+                    <th>Date & Time</th>
+                    <th>Items</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach($payments as $i => $p): 
+                    $items = json_decode($p['items_json'], true) ?? [];
+                    $remaining = $p['total'] - $p['advance_amount'];
+                ?>
+                <tr>
+                    <td><?= $i+1 ?></td>
+                    <td><?= htmlspecialchars($p['bill_number']) ?></td>
+                    <td><?= htmlspecialchars($p['fiscal_year']) ?></td>
+                    <td><?= htmlspecialchars($p['school_name']) ?></td>
+                    <td><?= htmlspecialchars($p['customer_name'] ?: 'Walk-in') ?></td>
+                    <td class="numeric"><?= number_format($p['advance_amount'], 2) ?></td>
+                    <td class="numeric"><?= number_format($p['total'], 2) ?></td>
+                    <td class="numeric"><?= number_format($remaining, 2) ?></td>
+                    <td><?= ucfirst($p['payment_method']) ?></td>
+                    <td><?= htmlspecialchars($p['printed_by'] ?? '') ?></td>
+                    <td><?= htmlspecialchars($p['bs_datetime']) ?></td>
+                    <td>
+                        <ul class="items-list">
+                            <?php foreach($items as $it): ?>
+                                <li><?= htmlspecialchars($it['name']) ?> (<?= htmlspecialchars($it['size'] ?? '') ?>) × <?= $it['quantity'] ?> -> <?= number_format($it['price'], 2) ?></li>
+                            <?php endforeach; ?>
+                        </ul>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+                <tr class="grand-total">
+                    <td colspan="5" style="text-align:right;"><strong>GRAND TOTAL</strong></td>
+                    <td class="numeric"><strong><?= number_format($grand_advance, 2) ?></strong></td>
+                    <td class="numeric"><strong><?= number_format($grand_total, 2) ?></strong></td>
+                    <td class="numeric"><strong><?= number_format($grand_remaining, 2) ?></strong></td>
+                    <td colspan="4"></td>
+                </tr>
+            </tbody>
         </table>
 
         <!-- Aggregated Items Summary -->
         <?php if (!empty($aggregatedItems)): ?>
             <h2>Aggregated Items Summary</h2>
             <table class="summary-table">
-                <!-- ... your existing aggregated table code ... -->
+                <thead>
+                    <tr>
+                        <th>S.N</th>
+                        <th>Name</th>
+                        <th>Brand</th>
+                        <th>Size</th>
+                        <th class="numeric">Quantity</th>
+                        <th class="numeric">Price Per Item</th>
+                        <th class="numeric">Total Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php 
+                    $summarySn = 1;
+                    $grandItemTotal = 0;
+                    foreach ($aggregatedItems as $item): 
+                        $lineTotal = $item['quantity'] * $item['price'];
+                        $grandItemTotal += $lineTotal;
+                    ?>
+                    <tr>
+                        <td><?= $summarySn++ ?></td>
+                        <td><?= htmlspecialchars($item['name']) ?></td>
+                        <td><?= htmlspecialchars($item['brand']) ?></td>
+                        <td><?= htmlspecialchars($item['size']) ?></td>
+                        <td class="numeric"><?= $item['quantity'] ?></td>
+                        <td class="numeric"><?= number_format($item['price'], 2) ?></td>
+                        <td class="numeric"><?= number_format($lineTotal, 2) ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                    <tr class="grand-total">
+                        <td colspan="6" style="text-align:right;"><strong>GRAND TOTAL (Items)</strong></td>
+                        <td class="numeric"><strong><?= number_format($grandItemTotal, 2) ?></strong></td>
+                    </tr>
+                </tbody>
             </table>
         <?php endif; ?>
     <?php endif; ?>
