@@ -315,7 +315,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $sheet->freezePane('A2');
 
     ob_end_clean();
-    $filename = "Sales_Return_" . date('Y-m-d') . ".xlsx";
+    $filename = "Sales_" . date('Y-m-d') . ".xlsx";
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     header('Content-Disposition: attachment; filename="' . $filename . '"');
     header('Cache-Control: max-age=0');

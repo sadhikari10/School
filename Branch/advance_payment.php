@@ -47,7 +47,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['exchange_return'])) {
     header("Location: advance_payment.php");
     exit();
 }
-
 // ============= EXCEL EXPORT LOGIC =============
 if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $search_bill = trim($_GET['bill'] ?? '');
@@ -102,7 +101,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $sheet = $spreadsheet->getActiveSheet();
     $sheet->setTitle('Advance Payments');
 
-    // Headers (Items column added)
+    // Headers
     $headers = ['S.N', 'Bill No.', 'Date (BS)', 'Customer', 'Advance Amount', 'Total Bill', 'Remaining', 'Payment Method', 'Branch', 'Items'];
     $col = 'A';
     foreach ($headers as $h) {
@@ -144,7 +143,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
         $row++;
     }
 
-    // Grand Total
+    // Grand Total Row
     $sheet->setCellValue('D' . $row, 'GRAND TOTAL');
     $sheet->setCellValue('E' . $row, $grand_advance);
     $sheet->setCellValue('F' . $row, $grand_total);
@@ -152,8 +151,49 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $sheet->getStyle('D' . $row . ':J' . $row)->getFont()->setBold(true)->setSize(13);
     $sheet->getStyle('E' . $row . ':G' . $row)->getNumberFormat()->setFormatCode('#,##0.00');
 
-    // Formatting
-    $sheet->getStyle('E2:G' . ($row))->getNumberFormat()->setFormatCode('#,##0.00');
+    $row += 3; // Space before summary
+
+    // === ADVANCE COLLECTION SUMMARY (CASH vs ONLINE) ===
+    $advance_cash = 0;
+    $advance_online = 0;
+    $grand_advance_total = 0;
+
+    foreach ($advances as $adv) {
+        $advance_amount = (float)$adv['advance_amount'];
+        $pay_method = strtolower(trim($adv['payment_method'] ?? ''));
+
+        $grand_advance_total += $advance_amount;
+
+        if ($pay_method === 'cash') {
+            $advance_cash += $advance_amount;
+        } elseif ($pay_method === 'online') {
+            $advance_online += $advance_amount;
+        }
+    }
+
+    $sheet->setCellValue('A' . $row, 'ADVANCE COLLECTION SUMMARY');
+    $sheet->mergeCells('A' . $row . ':J' . $row);
+    $sheet->getStyle('A' . $row)->getFont()->setBold(true)->setSize(14)->getColor()->setARGB('FFFFFFFF');
+    $sheet->getStyle('A' . $row)->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('FF667eea');
+    $row++;
+
+    $sheet->setCellValue('A' . $row, 'Cash Advance Collected');
+    $sheet->setCellValue('C' . $row, $advance_cash);
+    $row++;
+
+    $sheet->setCellValue('A' . $row, 'Online Advance Collected');
+    $sheet->setCellValue('C' . $row, $advance_online);
+    $row++;
+
+    $sheet->setCellValue('A' . $row, 'Total Advance Collected');
+    $sheet->setCellValue('C' . $row, $grand_advance_total);
+    $sheet->getStyle('A' . ($row-2) . ':C' . $row)->getFont()->setBold(true)->setSize(13);
+    $sheet->getStyle('C' . ($row-2) . ':C' . $row)->getNumberFormat()->setFormatCode('#,##0.00');
+    $sheet->getStyle('C' . ($row-2) . ':C' . $row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+    $sheet->getStyle('A' . $row . ':C' . $row)->getFont()->setSize(15)->getColor()->setARGB('FF667eea');
+
+    // General formatting
+    $sheet->getStyle('E2:G' . $row)->getNumberFormat()->setFormatCode('#,##0.00');
     $sheet->getStyle('E2:G' . $row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
     foreach (range('A', 'J') as $c) {
         $sheet->getColumnDimension($c)->setAutoSize(true);
@@ -171,6 +211,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $writer->save('php://output');
     exit();
 }
+
 
 // ============= NORMAL DISPLAY LOGIC =============
 $search_bill = trim($_GET['bill'] ?? '');
@@ -207,6 +248,22 @@ $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $advances = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+$advance_cash = 0;
+$advance_online = 0;
+$grand_advance_total = 0;
+
+foreach ($advances as $adv) {
+    $advance_amount = (float)$adv['advance_amount'];
+    $pay_method = strtolower(trim($adv['payment_method'] ?? ''));
+
+    $grand_advance_total += $advance_amount;
+
+    if ($pay_method === 'cash') {
+        $advance_cash += $advance_amount;
+    } elseif ($pay_method === 'online') {
+        $advance_online += $advance_amount;
+    }
+}
 // Prepare items display for HTML
 foreach ($advances as &$adv) {
     $items = json_decode($adv['items_json'] ?? '', true) ?? [];
@@ -344,14 +401,7 @@ unset($adv);
         </a>
     </div>
 
-    <div class="stats">
-        <?php if (!empty($search_bill) || !empty($search_customer) || !empty($search_date) || !empty($search_payment)): ?>
-            Search Results: <strong><?php echo count($advances); ?></strong> unpaid advance bill(s) found
-        <?php else: ?>
-            Total Unpaid Advance Bills: <strong><?php echo count($advances); ?></strong>
-        <?php endif; ?>
-    </div>
-
+    
     <?php if (empty($advances)): ?>
         <div class="no-data">
             <?php if (!empty($search_bill) || !empty($search_customer) || !empty($search_date) || !empty($search_payment)): ?>
@@ -411,6 +461,34 @@ unset($adv);
             </tbody>
         </table>
     <?php endif; ?>
+    <div class="stats" style="background:#f0f8ff; border:2px solid #667eea; border-radius:16px; padding:20px; margin:20px 0; text-align:center; font-size:18px;">
+        <strong>TOTAL ADVANCE COLLECTED</strong><br>
+        <span style="font-size:28px; color:#667eea; font-weight:bold;">
+            Rs. <?= number_format($grand_advance_total, 2) ?>
+        </span><br><br>
+
+        <div style="display:flex; justify-content:center; gap:60px; flex-wrap:wrap; margin-top:10px;">
+            <div>
+                <strong style="color:#27ae60;">Cash Advance</strong><br>
+                <span style="font-size:22px; color:#27ae60;">Rs. <?= number_format($advance_cash, 2) ?></span>
+            </div>
+            <div>
+                <strong style="color:#e67e22;">Online Advance</strong><br>
+                <span style="font-size:22px; color:#e67e22;">Rs. <?= number_format($advance_online, 2) ?></span>
+            </div>
+        </div>
+
+        <?php if (!empty($search_bill) || !empty($search_customer) || !empty($search_date) || !empty($search_payment)): ?>
+            <div style="margin-top:20px; font-size:15px; color:#7f8c8d;">
+                Filtered Results: <strong><?= count($advances) ?></strong> unpaid advance bill(s)
+            </div>
+        <?php else: ?>
+            <div style="margin-top:20px; font-size:15px; color:#7f8c8d;">
+                Total Unpaid Advance Bills: <strong><?= count($advances) ?></strong>
+            </div>
+        <?php endif; ?>
+    </div>
+
 
 </div>
 
