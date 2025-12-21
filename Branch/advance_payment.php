@@ -272,9 +272,19 @@ unset($adv);
         .action-btn:hover, .exchange-btn:hover { background: #219653; }
 
         .no-data { text-align: center; padding: 80px 20px; color: #95a5a6; font-size: 20px; }
-        .back-btn { display: inline-block; margin: 25px; padding: 14px 30px; background: #667eea; color: white; text-decoration: none; border-radius: 10px; font-weight: 600; }
-        .back-btn:hover { background: #5a6fd8; }
-
+            .back-btn { 
+        display: inline-block; 
+        margin-left: 20px;
+        padding: 12px 28px; 
+        background: #667eea; 
+        color: white; 
+        text-decoration: none; 
+        border-radius: 50px; 
+        font-weight: bold; 
+    }
+    .back-btn:hover { 
+        background: #5a6fd8; 
+    }
         .modal { display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5); }
         .modal-content { background-color: #fefefe; margin: 10% auto; padding: 30px; border: 1px solid #888; width: 400px; border-radius: 12px; position: relative; }
         .close { color: #aaa; float: right; font-size: 28px; font-weight: bold; position: absolute; right: 20px; top: 10px; cursor: pointer; }
@@ -328,6 +338,9 @@ unset($adv);
             echo $query ? '&' . htmlentities($query) : '';
         ?>" class="export-btn">
             <i class="fas fa-file-excel"></i> Export to Excel
+        </a>
+        <a href="dashboard.php" class="back-btn">
+            <i class="fas fa-home"></i> Back to Dashboard
         </a>
     </div>
 
@@ -399,9 +412,6 @@ unset($adv);
         </table>
     <?php endif; ?>
 
-    <div style="text-align:center;">
-        <a href="dashboard.php" class="back-btn">Back to Dashboard</a>
-    </div>
 </div>
 
 <!-- Modal -->

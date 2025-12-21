@@ -363,18 +363,17 @@ unset($s);
     .export-btn:hover{
         background:#219a52;
     }
-    .back-btn{
-        display:block;
-        width:260px;
-        margin:40px auto;
-        padding:16px;
+        .back-btn{
+        display:inline-block;
+        margin-left:20px;
+        padding:14px 32px;
         background:#8e44ad;
         color:#fff;
         text-align:center;
         border-radius:50px;
         text-decoration:none;
         font-weight:600;
-        font-size:1.1rem;
+        font-size:1rem;
         transition:all 0.3s;
         box-shadow:0 8px 25px rgba(142,68,173,0.3);
     }
@@ -406,18 +405,21 @@ unset($s);
         width:100%;height:100%;
         background:rgba(0,0,0,0.7);
         backdrop-filter:blur(5px);
+        overflow-y: auto;
     }
-    .modal-content{
-        background:#fff;
-        margin:6% auto;
-        padding:40px;
-        width:90%;
-        max-width:480px;
-        border-radius:20px;
-        box-shadow:0 20px 80px rgba(142,68,173,0.4);
-        position:relative;
-        animation:modalFadeIn 0.4s;
-    }
+    .modal-content {
+    background:#fff;
+    margin:20px auto;
+    padding:40px;
+    width:90%;
+    max-width:480px;
+    border-radius:20px;
+    box-shadow:0 20px 80px rgba(142,68,173,0.4);
+    position:relative;
+    animation:modalFadeIn 0.4s;
+    max-height: 85vh;         /* Limit height */
+    overflow-y: auto;          /* Enable vertical scrolling */
+}
     @keyframes modalFadeIn{
         from{opacity:0;transform:translateY(-50px);}
         to{opacity:1;transform:translateY(0);}
@@ -516,6 +518,9 @@ unset($s);
         ?>" class="export-btn">
             <i class="fas fa-file-excel"></i> Export to Excel
         </a>
+        <a href="dashboard.php" class="back-btn">
+            <i class="fas fa-home"></i> Back to Dashboard
+        </a>
     </div>
 
     <?php if (empty($sales)): ?>
@@ -568,9 +573,6 @@ unset($s);
         </table>
     <?php endif; ?>
 
-    <a href="dashboard.php" class="back-btn">
-        Back to Dashboard
-    </a>
 </div>
 
 <!-- Modal -->

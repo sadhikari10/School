@@ -278,8 +278,11 @@ $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         <div class="text-center mt-4">
             <a href="measurement.php?export=excel&start_bs=<?= urlencode($start_bs) ?>&end_bs=<?= urlencode($end_bs) ?>" 
-               class="btn btn-success btn-lg">
+               class="btn btn-success btn-lg me-3">
                 <i class="fas fa-file-excel"></i> Export My Orders
+            </a>
+            <a href="dashboard.php" class="btn btn-primary btn-lg">
+                <i class="fas fa-home"></i> Back to Dashboard
             </a>
         </div>
     </div>
@@ -341,9 +344,6 @@ $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
         echo "</div></div></div>";
     endif; ?>
 
-    <div class="text-center my-5">
-        <a href="dashboard.php" class="btn btn-lg btn-primary px-5">Back to Dashboard</a>
-    </div>
 </div>
 
 </body>
