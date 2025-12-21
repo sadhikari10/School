@@ -198,6 +198,13 @@ body{
             <p>View Payments</p>
         </a>
 
+        <!-- Measurement Report - NEW -->
+        <a href="measurement_report.php" class="card report-card">
+            <i class="fas fa-ruler-combined"></i>
+            <h3>Measurement Report</h3>
+            <p>View Custom Orders</p>
+        </a>
+
         <!-- Order Cancel -->
         <a href="order_exchange.php" class="card report-card">
             <i class="fas fa-ban"></i>

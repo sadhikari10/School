@@ -91,7 +91,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
         $items = json_decode($adv['items_json'] ?? '', true) ?? [];
         $itemsText = '';
         foreach ($items as $it) {
-            $itemsText .= ($it['name'] ?? '') . ' (' . ($it['size'] ?? 'N/A') . ') ×' .
+            $itemsText .= ($it['name'] ?? '') . ' (' . ($it['size'] ?? 'N/A') . ') x' .
                           ($it['quantity'] ?? 0) . ' @ ' . number_format($it['price'] ?? 0, 2) . "\n";
         }
         $adv['items_text'] = $itemsText ?: '';
@@ -162,6 +162,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $sheet->freezePane('A2');
 
     // Download
+    ob_end_clean();
     $filename = "Advance_Payments_" . date('Y-m-d') . ".xlsx";
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     header('Content-Disposition: attachment; filename="' . $filename . '"');
@@ -212,7 +213,7 @@ foreach ($advances as &$adv) {
     $itemsText = '';
     foreach ($items as $it) {
         $itemsText .= htmlspecialchars($it['name'] ?? '') .
-                      ' (' . htmlspecialchars($it['size'] ?? 'N/A') . ') × ' .
+                      ' (' . htmlspecialchars($it['size'] ?? 'N/A') . ') x ' .
                       ($it['quantity'] ?? 0) . ' @ ' .
                       number_format($it['price'] ?? 0, 2) . "<br>";
     }

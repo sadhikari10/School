@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require '../Common/connection.php';
 require '../Common/nepali_date.php';
@@ -181,6 +181,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     foreach (range('A', 'N') as $c) $sheet->getColumnDimension($c)->setAutoSize(true);
     $sheet->getColumnDimension('N')->setWidth(60);
 
+    ob_end_clean();
     $filename = "Sales_Report_" . date('Y-m-d') . ".xlsx";
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     header('Content-Disposition: attachment; filename="' . $filename . '"');

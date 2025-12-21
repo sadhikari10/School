@@ -2,11 +2,11 @@
 require '../Common/connection.php';   // adjust path if needed
 
 // === New Admin User Details ===
-$username       = 'Melina Thapa Magar';
-$email          = 'tamangmelina88@gmail.com';
-$phone_number   = '9862809804';
-$shop_name      = 'Everest School Uniform Pvt Ltd';   // ← Correct column name
-$plain_password = 'Melina@123';
+$username       = 'Test Test';
+$email          = 'test@gmail.com';
+$phone_number   = '9840000000';
+$shop_name      = 'Everest Clothe Store Pvt Ltd';   // ← Correct column name
+$plain_password = 'Test@123';
 $role           = 'staff';
 $outlet_id      = 2;//null
 

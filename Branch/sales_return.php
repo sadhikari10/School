@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require '../Common/connection.php';
 require '../Common/nepali_date.php';
@@ -164,6 +164,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $sheet->freezePane('A2');
 
     // Download
+    ob_end_clean();
     $filename = "Sales_" . date('Y-m-d') . ".xlsx";
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     header('Content-Disposition: attachment; filename="' . $filename . '"');

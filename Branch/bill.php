@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 // bill.php - ONLY BILL NUMBER LOGIC FIXED (everything else 100% original)
 session_start();
 ob_start();
@@ -250,18 +250,19 @@ if (!empty($customItems)) {
 
         // Save item name + price + qty in the new table
         $pdo->prepare("
-            INSERT INTO custom_measurement_items 
-                (bill_number, fiscal_year, outlet_id, item_index, item_name, price, quantity)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ")->execute([
-            $bill_number,
-            $fiscal_year,
-            $outlet_id,  // ← This is the key line
-            $itemIndex,
-            $cleanName,
-            (float)($item['price'] ?? 0),
-            max(1, (int)($item['quantity'] ?? 1))
-        ]);
+    INSERT INTO custom_measurement_items 
+        (bill_number, fiscal_year, outlet_id, item_index, item_name, price, quantity, bs_datetime)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+")->execute([
+    $bill_number,
+    $fiscal_year,
+    $outlet_id,
+    $itemIndex,
+    $cleanName,
+    (float)($item['price'] ?? 0),
+    max(1, (int)($item['quantity'] ?? 1)),
+    $print_time_db
+]);
 
         // Use numeric key in measurements & prices
         $key = (string)$itemIndex;  // "1", "2", "3"...
@@ -286,23 +287,25 @@ if (!empty($customItems)) {
 
     // Save only the JSON (with numeric keys)
     $stmt = $pdo->prepare("
-        INSERT INTO customer_measurements 
-            (bill_number, fiscal_year, school_id, outlet_id, customer_name, measurements, prices, created_at, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)
-        ON DUPLICATE KEY UPDATE
-            measurements = VALUES(measurements),
-            prices = VALUES(prices),
-            customer_name = VALUES(customer_name),
-            school_id = VALUES(school_id),
-            outlet_id = VALUES(outlet_id)
-    ");
+    INSERT INTO customer_measurements 
+        (bill_number, fiscal_year, school_id, outlet_id, customer_name, measurements, prices, created_at, created_by, bs_datetime)
+    VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)
+    ON DUPLICATE KEY UPDATE
+        measurements = VALUES(measurements),
+        prices = VALUES(prices),
+        customer_name = VALUES(customer_name),
+        school_id = VALUES(school_id),
+        outlet_id = VALUES(outlet_id),
+        created_by = VALUES(created_by),
+        bs_datetime = VALUES(bs_datetime)
+");
 
-    $stmt->execute([
-        $bill_number, $fiscal_year,
-        $_SESSION['selected_school_id'] ?? null,
-        $_SESSION['outlet_id'] ?? null,
-        $customer_name, $measurements_json, $prices_json, $printed_by
-    ]);
+$stmt->execute([
+    $bill_number, $fiscal_year,
+    $_SESSION['selected_school_id'] ?? null,
+    $outlet_id,
+    $customer_name, $measurements_json, $prices_json, $user_id, $print_time_db
+]);
 }
     // Save advance payment (unchanged)
     $pdo->prepare("INSERT INTO advance_payment 
@@ -363,15 +366,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
                 $cleanName = trim(preg_replace('/\s*\(Custom Made\)$/i', '', $rawName)) ?: 'Custom Item';
 
                 $pdo->prepare("
-                    INSERT INTO custom_measurement_items 
-                    (bill_number, fiscal_year, outlet_id, item_index, item_name, price, quantity)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                ")->execute([
-                    $bill_number, $fiscal_year, $outlet_id, $itemIndex,
-                    $cleanName,
-                    (float)($item['price'] ?? 0),
-                    max(1, (int)($item['quantity'] ?? 1))
-                ]);
+    INSERT INTO custom_measurement_items 
+        (bill_number, fiscal_year, outlet_id, item_index, item_name, price, quantity, bs_datetime)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+")->execute([
+    $bill_number, $fiscal_year, $outlet_id, $itemIndex,
+    $cleanName,
+    (float)($item['price'] ?? 0),
+    max(1, (int)($item['quantity'] ?? 1)),
+    $print_time_db
+]);
 
                 $key = (string)$itemIndex;
                 $prices[$key] = (float)($item['price'] ?? 0) * max(1, (int)($item['quantity'] ?? 1));
@@ -392,19 +396,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax_mark_paid'])) {
             $prices_json       = json_encode($prices, JSON_UNESCAPED_UNICODE);
 
             $pdo->prepare("
-                INSERT INTO customer_measurements 
-                (bill_number, fiscal_year, school_id, outlet_id, customer_name, measurements, prices, created_at, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)
-                ON DUPLICATE KEY UPDATE
-                    measurements=VALUES(measurements), prices=VALUES(prices),
-                    customer_name=VALUES(customer_name), school_id=VALUES(school_id),
-                    outlet_id=VALUES(outlet_id), created_by=VALUES(created_by)
-            ")->execute([
-                $bill_number, $fiscal_year,
-                $_SESSION['selected_school_id'] ?? null,
-                $outlet_id,
-                $customer_name, $measurements_json, $prices_json, $printed_by
-            ]);
+    INSERT INTO customer_measurements 
+        (bill_number, fiscal_year, school_id, outlet_id, customer_name, measurements, prices, created_at, created_by, bs_datetime)
+        VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)
+    ON DUPLICATE KEY UPDATE
+        measurements=VALUES(measurements), prices=VALUES(prices),
+        customer_name=VALUES(customer_name), school_id=VALUES(school_id),
+        outlet_id=VALUES(outlet_id), created_by=VALUES(created_by),
+        bs_datetime=VALUES(bs_datetime)
+")->execute([
+    $bill_number, $fiscal_year,
+    $_SESSION['selected_school_id'] ?? null,
+    $outlet_id,
+    $customer_name, $measurements_json, $prices_json, $user_id, $print_time_db
+]);
         }
 
         // ——————— SAVE TO SALES TABLE ———————
