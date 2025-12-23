@@ -93,39 +93,45 @@ class UniformSelector {
     }
 
     public function getEmoji($item_name) {
-        $iconMap = [
-            'Shirt' => '👕', 'Full Shirt' => '👕', 'Half Shirt' => '👕',
-            'Pant' => '👖', 'Full Pant' => '👖', 'Half Pant' => '🩳',
-            'Skirt' => '👗',
-            'Coat' => '🧥', 'Blazer' => '🧥', 'Cardigan' => '🧥',
-            'Tracksuit' => '🏃', 'Track Suit' => '🏃', 'Tracksuit 2 Piece' => '🏃',
-            'Sweater' => '🧶',
-            'Tie' => '👔',
-            'Belt' => '🧢',
-            'Shoe' => '👟',
-            'Socks' => '🧦', 'Stocking' => '🧦',
-            'Cap' => '🧢', 'Hat' => '👒',
-            'Scarf' => '🧣',
-            'Badge' => '🎖️', 'ID Card' => '🆔',
-        ];
-
         $lower = strtolower(trim($item_name));
-        foreach ($iconMap as $key => $emoji) {
-            if (strpos($lower, strtolower($key)) !== false) {
-                return $emoji;
-            }
-        }
 
+        // HIGH PRIORITY: specific items
+        if (strpos($lower, 'hoodie') !== false || strpos($lower, 'hoodi') !== false) return '🧥'; // outerwear for hoodie
+        if (strpos($lower, 'jersey') !== false) return '🎽';
+        if (strpos($lower, 'tunic') !== false) return '👗';
+        if (strpos($lower, 'muffler') !== false || strpos($lower, 'scarf') !== false) return '🧣';
+        if (strpos($lower, 'bag') !== false) return '🎒';
+        if (strpos($lower, 'belt') !== false) return '➖'; // simple placeholder for belt
+
+        // FORMAL OUTERWEAR
+        if (strpos($lower, 'coat') !== false) return '🧥';
+        if (strpos($lower, 'blazer') !== false) return '🧥';
+        if (strpos($lower, 'cardigan') !== false) return '🧥';
+
+        // TOPS
         if (strpos($lower, 'shirt') !== false) return '👕';
+        if (strpos($lower, 'sweater') !== false) return '🧶';
+
+        // BOTTOMS
         if (strpos($lower, 'pant') !== false) return '👖';
         if (strpos($lower, 'skirt') !== false) return '👗';
-        if (strpos($lower, 'track') !== false) return '🏃';
-        if (strpos($lower, 'sweater') !== false) return '🧶';
-        if (strpos($lower, 'shoe') !== false) return '👟';
-        if (strpos($lower, 'tie') !== false) return '👔';
-        if (strpos($lower, 'sock') !== false) return '🧦';
 
+        // SPORTSWEAR
+        if (strpos($lower, 'track') !== false) return '🏃';
+
+        // ACCESSORIES
+        if (strpos($lower, 'tie') !== false) return '👔';
+        if (strpos($lower, 'shoe') !== false) return '👟';
+        if (strpos($lower, 'sock') !== false || strpos($lower, 'stocking') !== false) return '🧦';
+        if (strpos($lower, 'cap') !== false) return '🧢';
+        if (strpos($lower, 'hat') !== false) return '👒';
+        if (strpos($lower, 'badge') !== false) return '🎖️';
+        if (strpos($lower, 'id') !== false) return '🆔';
+
+        // DEFAULT
         return '🎽';
     }
+
+
 }
 ?>
