@@ -2,9 +2,16 @@
 session_start();
 require '../Common/connection.php';  // Make sure this path is correct
 
+// === SYSTEM EXPIRY CHECK (HARDCODED) ===
+$expiry_date = '2026-12-20';  // ←←← CHANGE THIS DATE WHEN RENEWING (YYYY-MM-DD)
+
+$current_date = date('Y-m-d');
+$is_expired = ($current_date > $expiry_date);
+// === END EXPIRY CHECK ===
+
 $error_message = '';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if (!$is_expired && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $email    = trim($_POST['email'] ?? '');
     $password = $_POST['password'] ?? '';
     $role     = $_POST['role'] ?? '';
@@ -20,27 +27,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->execute([':email' => $email]);
             $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-            // Verify password + selected role matches actual role in DB
             if ($user && password_verify($password, $user['password']) && $user['role'] === $role) {
 
-                // Common session data
                 $_SESSION['user_id']   = $user['id'];
                 $_SESSION['username']  = $user['username'];
                 $_SESSION['email']     = $user['email'];
                 $_SESSION['role']      = $user['role'];
 
                 if ($user['role'] === 'admin') {
-                    // Admin: no outlet needed
                     $_SESSION['outlet_id'] = null;
                     header("Location: ../admin/index.php");
                     exit();
                 } else {
-                    // Staff: outlet_id must exist
                     if (!$user['outlet_id']) {
                         $error_message = 'This staff account has no outlet assigned. Contact admin.';
                     } else {
                         $_SESSION['outlet_id'] = (int)$user['outlet_id'];
-                        header("Location: ../Branch/dashboard.php");  // Change to your staff dashboard if needed
+                        header("Location: ../Branch/dashboard.php");
                         exit();
                     }
                 }
@@ -71,7 +74,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         .login-container {
             background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); padding: 40px;
             border-radius: 20px; box-shadow: 0 20px 40px rgba(0,0,0,0.1); width: 100%; max-width: 400px;
-            text-align: center; border: 1px solid rgba(255,255,255,0.2);
+            text-align: center; border: 1px solid rgba(255,255,255,0.2); position: relative; z-index: 1;
         }
         .login-header i { font-size: 3rem; color: #8e44ad; margin-bottom: 15px; }
         .login-header h1 { color: #2c3e50; font-size: 2rem; font-weight: 700; margin-bottom: 5px; }
@@ -97,9 +100,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             display: flex; align-items: center; gap: 10px;
         }
         .error { background: #fee; color: #c53030; border: 1px solid #fed7d7; }
+
+        /* === EXPIRY MODAL (Floating Window) === */
+        .expiry-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.6); z-index: 9999; display: flex;
+            align-items: center; justify-content: center;
+        }
+        .expiry-modal {
+            background: white; padding: 40px; border-radius: 20px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.4); max-width: 500px; text-align: center;
+            position: relative; animation: modalPop 0.4s ease-out;
+        }
+        @keyframes modalPop {
+            from { transform: scale(0.8); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+        }
+        .expiry-modal i {
+            font-size: 4rem; color: #e74c3c; margin-bottom: 20px;
+        }
+        .expiry-modal h2 {
+            color: #c0392b; margin-bottom: 15px; font-size: 1.8rem;
+        }
+        .expiry-modal p {
+            color: #444; line-height: 1.6; margin-bottom: 20px;
+        }
+        .close-btn {
+            position: absolute; top: 15px; right: 20px;
+            font-size: 1.8rem; color: #999; cursor: pointer;
+            transition: color 0.3s;
+        }
+        .close-btn:hover { color: #c0392b; }
+        .ok-btn {
+            padding: 12px 30px; background: #8e44ad; color: white;
+            border: none; border-radius: 10px; font-size: 1.1rem;
+            cursor: pointer; transition: background 0.3s;
+        }
+        .ok-btn:hover { background: #732d91; }
     </style>
 </head>
 <body>
+
+    <?php if ($is_expired): ?>
+    <!-- Expiry Floating Window (Modal with Close & OK) -->
+    <div class="expiry-overlay" id="expiryOverlay">
+        <div class="expiry-modal">
+            <span class="close-btn" onclick="document.getElementById('expiryOverlay').style.display='none'">&times;</span>
+            <i class="fas fa-exclamation-triangle"></i>
+            <h2>Software Expired</h2>
+            <p><strong>Software expired. Renew the software to use further.</strong></p>
+            <p>Please contact the developer or administrator for renewal.</p>
+            <button class="ok-btn" onclick="document.getElementById('expiryOverlay').style.display='none'">OK</button>
+        </div>
+    </div>
+    <?php endif; ?>
+
     <div class="login-container">
         <div class="login-header">
             <i class="fas fa-user-lock"></i>
