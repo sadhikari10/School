@@ -567,7 +567,24 @@ if (isset($_POST['start_new_bill'])) {
 <!-- QR Popup -->
 <div class="qr-popup" id="qrPopup">
     <span class="close-qr" onclick="document.getElementById('qrPopup').style.display='none'">×</span>
-    <img src="../QR/1.jpeg" alt="Payment QR">
+    
+    <?php
+    // Determine the correct QR image based on outlet_id
+    $qr_image_path = '../QR/1.jpeg'; // default fallback
+
+    if ($outlet_id == 1) {
+        $qr_image_path = '../QR/1.jpeg';
+    } elseif ($outlet_id == 2) {
+        $qr_image_path = '../QR/2.jpeg';
+    } elseif (file_exists('../QR/' . $outlet_id . '.jpeg')) {
+        // If a specific QR image exists for this outlet (e.g., 3.jpeg, 4.jpeg, etc.)
+        $qr_image_path = '../QR/' . $outlet_id . '.jpeg';
+    }
+    // If none of the above, it stays as 1.jpeg (default)
+    ?>
+
+    <img src="<?php echo htmlspecialchars($qr_image_path); ?>" alt="Payment QR for <?php echo htmlspecialchars($location); ?>">
+    
 </div>
 
 <!-- Alert -->
