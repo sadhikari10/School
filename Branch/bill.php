@@ -576,11 +576,13 @@ if (isset($_POST['start_new_bill'])) {
         $qr_image_path = '../QR/1.jpeg';
     } elseif ($outlet_id == 2) {
         $qr_image_path = '../QR/2.jpeg';
+    } elseif ($outlet_id == 3 || $outlet_id == 4) {
+        // Both outlet 3 and 4 use the same image: 3.jpg
+        $qr_image_path = '../QR/3.jpeg';
     } elseif (file_exists('../QR/' . $outlet_id . '.jpeg')) {
-        // If a specific QR image exists for this outlet (e.g., 3.jpeg, 4.jpeg, etc.)
         $qr_image_path = '../QR/' . $outlet_id . '.jpeg';
     }
-    // If none of the above, it stays as 1.jpeg (default)
+    // Fallback remains 1.jpeg if nothing matches
     ?>
 
     <img src="<?php echo htmlspecialchars($qr_image_path); ?>" alt="Payment QR for <?php echo htmlspecialchars($location); ?>">
