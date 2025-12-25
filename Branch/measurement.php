@@ -9,40 +9,82 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 
 // ==================== SECURITY CHECK ====================
-if (!isset($_SESSION['user_id']) || !isset($_SESSION['role'])) {
+if (!isset($_SESSION['user_id'])) {
     header("Location: ../login.php");
     exit();
 }
 
 $user_id   = (int)$_SESSION['user_id'];
-$user_role = $_SESSION['role'];
 $outlet_id = $_SESSION['outlet_id'] ?? null;
 
-// ==================== DATE FILTERS (B.S.) ====================
+// ==================== FILTERS ====================
 $start_bs = trim($_GET['start_bs'] ?? '');
 $end_bs   = trim($_GET['end_bs'] ?? '');
+$taken_by = trim($_GET['taken_by'] ?? '');
 
 $apply_date_filter = (!empty($start_bs) && !empty($end_bs));
 
-// ==================== EXCEL EXPORT (UPDATED: ONLY REQUESTED COLUMNS) ====================
+// ==================== FETCH ALL STAFF FROM THIS OUTLET ====================
+$staff_sql = "SELECT id AS user_id, Username FROM login WHERE outlet_id = ? ORDER BY Username";
+$staff_stmt = $pdo->prepare($staff_sql);
+$staff_stmt->execute([$outlet_id]);
+$staff_list = $staff_stmt->fetchAll(PDO::FETCH_ASSOC);
+
+$staff_map = [];
+foreach ($staff_list as $staff) {
+    $staff_map[$staff['user_id']] = $staff['Username'];
+}
+
+// ==================== HANDLE MARK AS DONE (POST METHOD) ====================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_done'])) {
+    $item_id = (int)$_POST['item_id'];
+
+    $check_sql = "SELECT 1 
+                  FROM custom_measurement_items cmi 
+                  JOIN customer_measurements cm ON cmi.bill_number = cm.bill_number AND cmi.fiscal_year = cm.fiscal_year
+                  WHERE cmi.id = ? AND cm.outlet_id = ? AND cmi.done = 0";
+    $check_stmt = $pdo->prepare($check_sql);
+    $check_stmt->execute([$item_id, $outlet_id]);
+
+    if ($check_stmt->fetch()) {
+        $stmt = $pdo->prepare("UPDATE custom_measurement_items SET done = 1 WHERE id = ?");
+        $stmt->execute([$item_id]);
+        $msg = 'Item marked as completed!';
+        $success = true;
+    } else {
+        $msg = 'Item not found or already completed.';
+        $success = false;
+    }
+
+    if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) == 'xmlhttprequest') {
+        header('Content-Type: application/json');
+        echo json_encode(['success' => $success, 'message' => $msg]);
+        exit;
+    }
+
+    $_SESSION['flash_message'] = $msg;
+    $query_params = http_build_query(array_filter(['start_bs' => $start_bs, 'end_bs' => $end_bs, 'taken_by' => $taken_by]));
+    header("Location: measurement.php?" . $query_params);
+    exit;
+}
+
+$flash_message = $_SESSION['flash_message'] ?? '';
+unset($_SESSION['flash_message']);
+
+// ==================== EXCEL EXPORT (WITH "Taken By") ====================
 if (isset($_GET['export']) && $_GET['export'] === 'excel') {
-    $where = "WHERE cmi.done = 0 AND cm.outlet_id = ? AND cm.created_by = ?";
-    $params = [$outlet_id, $user_id];
+    $where = "WHERE cmi.done = 0 AND cm.outlet_id = ?";
+    $params = [$outlet_id];
+
+    if (!empty($taken_by)) {
+        $where .= " AND cm.created_by = ?";
+        $params[] = $taken_by;
+    }
 
     if ($apply_date_filter) {
         $where .= " AND DATE(cmi.bs_datetime) BETWEEN ? AND ?";
         $params[] = $start_bs;
         $params[] = $end_bs;
-    }
-
-    if ($user_role === 'admin') {
-        $where = "WHERE cmi.done = 0 AND cm.outlet_id = ?";
-        $params = [$outlet_id];
-        if ($apply_date_filter) {
-            $where .= " AND DATE(cmi.bs_datetime) BETWEEN ? AND ?";
-            $params[] = $start_bs;
-            $params[] = $end_bs;
-        }
     }
 
     $sql = "
@@ -51,9 +93,10 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
             cm.customer_name,
             cmi.item_name,
             cmi.quantity,
+            cm.created_by,
             JSON_EXTRACT(cm.measurements, CONCAT('$.\"', cmi.item_index, '\"')) AS measurement_json
         FROM customer_measurements cm
-        JOIN custom_measurement_items cmi ON cm.bill_number = cmi.bill_number AND cm.fiscal_year = cmi.fiscal_year
+        JOIN custom_measurement_items cmi ON cmi.bill_number = cm.bill_number AND cmi.fiscal_year = cm.fiscal_year
         $where
         ORDER BY cmi.bs_datetime DESC, cm.bill_number DESC, cmi.item_index
     ";
@@ -66,17 +109,15 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $sheet = $spreadsheet->getActiveSheet();
     $sheet->setTitle('Pending Orders');
 
-    // Only these headers
-    $headers = ['S.N', 'Bill No.', 'Customer', 'Item', 'Quantity', 'Measurements'];
-
+    $headers = ['S.N', 'Bill No.', 'Customer', 'Item', 'Quantity', 'Taken By', 'Measurements'];
     $col = 'A';
     foreach ($headers as $h) {
         $sheet->setCellValue("{$col}1", $h);
         $col++;
     }
 
-    $sheet->getStyle('A1:F1')->getFont()->setBold(true)->setSize(12);
-    $sheet->getStyle('A1:F1')->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('FF0d6efd');
+    $sheet->getStyle('A1:G1')->getFont()->setBold(true)->setSize(12);
+    $sheet->getStyle('A1:G1')->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('FF0d6efd');
 
     $row = 2;
     $sn = 1;
@@ -94,21 +135,22 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
             $measText = 'No measurements';
         }
 
+        $taken_by_name = $staff_map[$r['created_by']] ?? 'Unknown';
+
         $sheet->setCellValue("A{$row}", $sn++);
         $sheet->setCellValue("B{$row}", $r['bill_number']);
         $sheet->setCellValue("C{$row}", $r['customer_name']);
         $sheet->setCellValue("D{$row}", $r['item_name']);
         $sheet->setCellValue("E{$row}", $r['quantity']);
-        $sheet->setCellValue("F{$row}", $measText);
-
+        $sheet->setCellValue("F{$row}", $taken_by_name);
+        $sheet->setCellValue("G{$row}", $measText);
         $row++;
     }
 
-    // Auto-size columns
-    foreach (range('A', 'F') as $c) {
+    foreach (range('A', 'G') as $c) {
         $sheet->getColumnDimension($c)->setAutoSize(true);
     }
-    $sheet->getColumnDimension('F')->setWidth(80);
+    $sheet->getColumnDimension('G')->setWidth(80);
 
     $title = $apply_date_filter ? "Pending_{$start_bs}_to_{$end_bs}" : "All_Pending";
     ob_end_clean();
@@ -122,54 +164,13 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     exit;
 }
 
-// ==================== MARK AS DONE ====================
-if (isset($_GET['done']) && $_GET['done'] != '') {
-    $item_id = (int)$_GET['done'];
+// ==================== MAIN QUERY (ONLY PENDING ITEMS) ====================
+$where = "WHERE cmi.done = 0 AND cm.outlet_id = ?";
+$params = [$outlet_id];
 
-    $check_sql = "SELECT cm.bill_number 
-                  FROM customer_measurements cm
-                  JOIN custom_measurement_items cmi ON cm.bill_number = cmi.bill_number AND cm.fiscal_year = cmi.fiscal_year
-                  WHERE cmi.id = ? AND cm.outlet_id = ? AND cm.created_by = ?";
-    $params_check = [$item_id, $outlet_id, $user_id];
-
-    if ($user_role === 'admin') {
-        $check_sql = "SELECT cm.bill_number FROM customer_measurements cm
-                      JOIN custom_measurement_items cmi ON cm.bill_number = cmi.bill_number AND cm.fiscal_year = cmi.fiscal_year
-                      WHERE cmi.id = ? AND cm.outlet_id = ?";
-        $params_check = [$item_id, $outlet_id];
-    }
-
-    $check_stmt = $pdo->prepare($check_sql);
-    $check_stmt->execute($params_check);
-
-    if ($check_stmt->fetch()) {
-        $stmt = $pdo->prepare("UPDATE custom_measurement_items SET done = 1 WHERE id = ?");
-        $stmt->execute([$item_id]);
-        $msg = 'Item marked as completed!';
-        $success = true;
-    } else {
-        $msg = 'Unauthorized action.';
-        $success = false;
-    }
-
-    if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) == 'xmlhttprequest') {
-        echo json_encode(['success' => $success, 'message' => $msg]);
-        exit;
-    }
-
-    $query_params = http_build_query(array_filter(['start_bs' => $start_bs, 'end_bs' => $end_bs]));
-    $redirect = $query_params ? "?$query_params" : '';
-    echo "<script>alert('$msg'); window.location='measurement.php$redirect';</script>";
-    exit;
-}
-
-// ==================== MAIN QUERY (ONLY PENDING) ====================
-$where = "WHERE cmi.done = 0 AND cm.outlet_id = ? AND cm.created_by = ?";
-$params = [$outlet_id, $user_id];
-
-if ($user_role === 'admin') {
-    $where = "WHERE cmi.done = 0 AND cm.outlet_id = ?";
-    $params = [$outlet_id];
+if (!empty($taken_by)) {
+    $where .= " AND cm.created_by = ?";
+    $params[] = $taken_by;
 }
 
 if ($apply_date_filter) {
@@ -184,6 +185,7 @@ $sql = "
         cm.fiscal_year,
         cm.customer_name,
         cm.phone,
+        cm.created_by,
         cmi.bs_datetime,
         cmi.id AS item_id,
         cmi.item_index,
@@ -193,7 +195,7 @@ $sql = "
         (cmi.price * cmi.quantity) AS total_amount,
         JSON_EXTRACT(cm.measurements, CONCAT('$.\"', cmi.item_index, '\"')) AS measurement_json
     FROM customer_measurements cm
-    JOIN custom_measurement_items cmi ON cm.bill_number = cmi.bill_number AND cm.fiscal_year = cmi.fiscal_year
+    JOIN custom_measurement_items cmi ON cmi.bill_number = cm.bill_number AND cmi.fiscal_year = cm.fiscal_year
     $where
     ORDER BY cmi.bs_datetime DESC, cm.bill_number DESC, cmi.item_index
 ";
@@ -208,7 +210,7 @@ $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>My Pending Custom Orders</title>
+    <title>Pending Custom Orders</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
@@ -223,29 +225,44 @@ $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 <div class="container mt-5 pt-4">
     <h1 class="text-primary mb-4 text-center">
-        My Pending Custom Orders
-        <?php if ($user_role === 'admin'): ?>
-            <small class="d-block text-muted fs-5">(All in Branch)</small>
-        <?php endif; ?>
+        Pending Custom Orders
     </h1>
+
+    <?php if ($flash_message): ?>
+        <div class="alert alert-success alert-dismissible fade show mt-3">
+            <?= htmlspecialchars($flash_message) ?>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+    <?php endif; ?>
 
     <div class="filter-card">
         <form method="GET" class="row g-3 align-items-end">
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <label class="form-label fw-bold">Start Date (B.S.)</label>
                 <input type="text" name="start_bs" class="form-control form-control-lg" 
                        placeholder="e.g. 2082-08-09" 
-                       value="<?= htmlspecialchars($start_bs) ?>" 
-                       pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}">
+                       value="<?= htmlspecialchars($start_bs) ?>">
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <label class="form-label fw-bold">End Date (B.S.)</label>
                 <input type="text" name="end_bs" class="form-control form-control-lg" 
                        placeholder="e.g. 2082-09-02" 
-                       value="<?= htmlspecialchars($end_bs) ?>" 
-                       pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}">
+                       value="<?= htmlspecialchars($end_bs) ?>">
             </div>
-            <div class="col-md-4 text-center">
+
+            <div class="col-md-3">
+                <label class="form-label fw-bold">Measurement Taken By</label>
+                <select name="taken_by" class="form-select form-select-lg">
+                    <option value="">All Staff</option>
+                    <?php foreach ($staff_map as $uid => $username): ?>
+                        <option value="<?= $uid ?>" <?= $taken_by == $uid ? 'selected' : '' ?>>
+                            <?= htmlspecialchars($username) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+
+            <div class="col-md-3 text-center">
                 <button type="submit" class="btn btn-primary btn-lg px-4 me-2">
                     <i class="fas fa-search"></i> Search
                 </button>
@@ -256,9 +273,9 @@ $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
         </form>
 
         <div class="text-center mt-4">
-            <a href="measurement.php?export=excel&start_bs=<?= urlencode($start_bs) ?>&end_bs=<?= urlencode($end_bs) ?>" 
+            <a href="measurement.php?export=excel&start_bs=<?= urlencode($start_bs) ?>&end_bs=<?= urlencode($end_bs) ?>&taken_by=<?= urlencode($taken_by) ?>" 
                class="btn btn-success btn-lg me-3">
-                <i class="fas fa-file-excel"></i> Export My Orders
+                <i class="fas fa-file-excel"></i> Export Orders
             </a>
             <a href="dashboard.php" class="btn btn-primary btn-lg">
                 <i class="fas fa-home"></i> Back to Dashboard
@@ -291,6 +308,8 @@ $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 $measTextModal = "<em class='text-muted'>No measurements recorded</em>";
             }
 
+            $taken_by_username = $staff_map[$row['created_by']] ?? 'Unknown';
+
             if ($current_bill !== $row['bill_number']):
                 if ($current_bill !== null) echo "</div></div></div><hr class='my-5'>";
                 $current_bill = $row['bill_number'];
@@ -299,6 +318,7 @@ $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 echo "<div class='card-header bg-primary text-white d-flex justify-content-between align-items-center flex-wrap gap-2'>";
                 echo "<div>";
                 echo "<h5 class='mb-0'>Bill No: <strong>{$row['bill_number']}</strong> • {$row['fiscal_year']}</h5>";
+                echo "<small>Taken by: <strong>{$taken_by_username}</strong></small>";
                 echo "</div>";
                 echo "<small>BS Date: <strong>{$bs_date}</strong></small>";
                 echo "</div>";
@@ -316,16 +336,16 @@ $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
             echo $measTextList;
             echo "</div>";
 
-            echo "<div class='col-lg-4 text-end'>";
+            echo "<div class='col-lg-4 text-end align-self-center'>";
             echo "<button type='button' class='btn btn-success btn-lg done-btn shadow'
                      data-bs-toggle='modal' data-bs-target='#confirmDoneModal'
                      data-item-id='{$row['item_id']}'
-                     data-bill='{$row['bill_number']}'
-                     data-item-name='" . htmlspecialchars($row['item_name'], ENT_QUOTES) . "'
-                     data-customer='" . htmlspecialchars($row['customer_name'], ENT_QUOTES) . "'
+                     data-bill-number='{$row['bill_number']}'
+                     data-item-name='" . htmlspecialchars(addslashes($row['item_name'])) . "'
+                     data-customer='" . htmlspecialchars(addslashes($row['customer_name'])) . "'
                      data-quantity='{$row['quantity']}'
                      data-total='" . number_format($row['total_amount'], 2) . "'
-                     data-measurements='" . htmlspecialchars($measTextModal, ENT_QUOTES) . "'>
+                     data-measurements='" . htmlspecialchars(addslashes($measTextModal)) . "'>
                      Done
                   </button>";
             echo "</div>";
@@ -361,19 +381,26 @@ $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
       </div>
     </div>
 
+    <!-- Hidden form for POST -->
+    <form id="doneForm" method="POST" style="display: none;">
+        <input type="hidden" name="mark_done" value="1">
+        <input type="hidden" name="item_id" id="doneItemId" value="">
+    </form>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
     <script>
-    const confirmDoneModal = document.getElementById('confirmDoneModal');
     let currentItemId = null;
-    const currentQueryParams = "<?= http_build_query(array_filter(['start_bs' => $start_bs, 'end_bs' => $end_bs])) ?>";
+    let currentBillNumber = null;
+
+    const confirmDoneModal = document.getElementById('confirmDoneModal');
 
     confirmDoneModal.addEventListener('show.bs.modal', function (event) {
         const button = event.relatedTarget;
-
         currentItemId = button.getAttribute('data-item-id');
+        currentBillNumber = button.getAttribute('data-bill-number');
 
-        document.getElementById('modal-bill').textContent = button.getAttribute('data-bill');
+        document.getElementById('modal-bill').textContent = currentBillNumber;
         document.getElementById('modal-customer').textContent = button.getAttribute('data-customer');
         document.getElementById('modal-item-name').textContent = button.getAttribute('data-item-name');
         document.getElementById('modal-quantity').textContent = button.getAttribute('data-quantity');
@@ -384,53 +411,51 @@ $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
     document.getElementById('confirm-done-btn').addEventListener('click', function () {
         if (!currentItemId) return;
 
-        const url = `measurement.php?done=${currentItemId}&${currentQueryParams}`;
+        document.getElementById('doneItemId').value = currentItemId;
 
-        fetch(url, {
-            method: 'GET',
+        const formData = new FormData(document.getElementById('doneForm'));
+
+        fetch('measurement.php', {
+            method: 'POST',
+            body: formData,
             headers: { 'X-Requested-With': 'XMLHttpRequest' }
         })
         .then(response => response.json())
         .then(data => {
-            if (data.success) {
-                const modal = bootstrap.Modal.getInstance(confirmDoneModal);
-                modal.hide();
+            const modal = bootstrap.Modal.getInstance(confirmDoneModal);
+            modal.hide();
 
-                const successDiv = document.getElementById('success-message');
-                successDiv.innerHTML = `<div class="alert alert-success alert-dismissible fade show">
-                                            <strong>Success!</strong> ${data.message}
-                                            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                                        </div>`;
+            const successDiv = document.getElementById('success-message');
+            successDiv.innerHTML = `<div class="alert alert-success alert-dismissible fade show">
+                                        <strong>Success!</strong> ${data.message}
+                                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                                    </div>`;
 
-                const itemRow = document.getElementById('item-row-' + currentItemId);
-                if (itemRow) itemRow.remove();
+            const itemRow = document.getElementById('item-row-' + currentItemId);
+            if (itemRow) itemRow.remove();
 
-                const billCard = document.getElementById('bill-card-' + document.getElementById('modal-bill').textContent);
-                if (billCard) {
-                    const remainingItems = billCard.querySelectorAll('.row.mb-3');
-                    if (remainingItems.length === 0) {
-                        billCard.nextElementSibling?.remove();
-                        billCard.remove();
-                    }
+            const billCard = document.getElementById('bill-card-' + currentBillNumber);
+            if (billCard) {
+                const remaining = billCard.querySelectorAll('.row.mb-3');
+                if (remaining.length === 0) {
+                    billCard.nextElementSibling?.remove();
+                    billCard.remove();
                 }
+            }
 
-                if (document.querySelectorAll('.card').length === 0) {
-                    document.querySelector('.container').innerHTML += `
-                        <div class="alert alert-success text-center fs-2 mt-5">
-                            <i class="fas fa-check-circle"></i> No pending orders!
-                        </div>`;
-                }
-            } else {
-                alert(data.message);
+            if (document.querySelectorAll('.card').length === 0) {
+                document.querySelector('.container').insertAdjacentHTML('beforeend', `
+                    <div class="alert alert-success text-center fs-2 mt-5">
+                        <i class="fas fa-check-circle"></i> No pending orders!
+                    </div>`);
             }
         })
         .catch(err => {
             console.error(err);
-            alert('Error marking item as done. Please try again.');
+            alert('Error. Please try again.');
         });
     });
     </script>
-
 </div>
 </body>
 </html>
