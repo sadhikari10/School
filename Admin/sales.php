@@ -190,9 +190,8 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $writer->save('php://output');
     exit;
 }
-
 // =============================================
-// NORMAL DISPLAY LOGIC (MATCHING advance_payment.php)
+// NORMAL DISPLAY LOGIC (with default last 30 days)
 // =============================================
 $params = [$outlet_id];
 $where  = ["outlet_id = ?"];
@@ -205,24 +204,67 @@ if (!empty($_GET['advance_payment_method'])) { $where[] = "advance_payment_metho
 if (!empty($_GET['printed_by'])) { $where[] = "printed_by LIKE ?"; $params[] = "%{$_GET['printed_by']}%"; }
 if (!empty($_GET['bill_number'])) { $where[] = "bill_number LIKE ?"; $params[] = "%{$_GET['bill_number']}%"; }
 
-// Only apply date filter if both start and end are provided
+// ─────────────────────────────────────────────
+// Date filtering logic ─ default: last ~30 days
+// ─────────────────────────────────────────────
+$default_range_applied = false;
+
 if (!empty($_GET['start_date']) && !empty($_GET['end_date'])) {
+    // User gave explicit bs_datetime range
     $where[] = "bs_datetime BETWEEN ? AND ?";
     $params[] = $_GET['start_date'] . ' 00:00:00';
     $params[] = $_GET['end_date'] . ' 23:59:59';
 }
-
-if (!empty($_GET['adv_start_date']) && !empty($_GET['adv_end_date'])) {
+elseif (!empty($_GET['adv_start_date']) && !empty($_GET['adv_end_date'])) {
+    // User gave explicit advance_date range
     $where[] = "advance_date BETWEEN ? AND ?";
     $params[] = $_GET['adv_start_date'];
     $params[] = $_GET['adv_end_date'];
 }
+else {
+    // DEFAULT: last 30 days in BS date
+    $default_range_applied = true;
 
+    $today_str = nepali_date_time();                    // e.g. "2082-04-01 14:30"
+    $today_date = explode(' ', $today_str)[0];          // "2082-04-01"
+    list($yy, $mm, $dd) = explode('-', $today_date);
+
+    $yy = (int)$yy;
+    $mm = (int)$mm;
+    $dd = (int)$dd;
+
+    $dates = [];
+
+    // Generate approx last 30 days (simple backward subtraction)
+    for ($i = 0; $i < 30; $i++) {
+        $day = $dd - $i;
+        $month = $mm;
+        $year = $yy;
+
+        while ($day < 1) {
+            $month--;
+            if ($month < 1) {
+                $month = 12;
+                $year--;
+            }
+            $day += 30; // rough approximation — enough for filtering
+        }
+
+        $dates[] = sprintf('%04d-%02d-%02d', $year, $month, $day);
+    }
+
+    if (!empty($dates)) {
+        $placeholders = implode(',', array_fill(0, count($dates), '?'));
+        $where[] = "DATE(bs_datetime) IN ($placeholders)";
+        $params = array_merge($params, $dates);
+    }
+}
+
+// Build and execute query
 $sql = "SELECT * FROM sales WHERE " . implode(' AND ', $where) . " ORDER BY bs_datetime DESC";
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
 // Grand totals for display
 $grand_total = $grand_advance = $grand_final = 0;
 foreach ($sales as $s) {
