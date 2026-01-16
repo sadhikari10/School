@@ -271,8 +271,53 @@ foreach ($sales as $s) {
     $grand_total   += $s['total'];
     $grand_advance += $s['advance_amount'] > 0 ? $s['advance_amount'] : 0;
     $grand_final   += $s['final_amount'];
-}
+}// Payment breakdown - Cash vs Online, now with Direct Sales category
+$advance_cash   = 0;
+$advance_online = 0;
+$final_cash     = 0;
+$final_online   = 0;
+$direct_cash    = 0;
+$direct_online  = 0;
 
+foreach ($sales as $s) {
+    $adv_amt  = floatval($s['advance_amount'] ?? 0);
+    $fin_amt  = floatval($s['final_amount'] ?? 0);
+    $total_amt = floatval($s['total'] ?? 0);
+
+    $adv_method = strtolower(trim($s['advance_payment_method'] ?? ''));
+    $fin_method = strtolower(trim($s['payment_method'] ?? ''));
+
+    // ── Advance part ──
+    if ($adv_amt > 0) {
+        if ($adv_method === 'cash') {
+            $advance_cash += $adv_amt;
+        } elseif ($adv_method === 'online') {
+            $advance_online += $adv_amt;
+        }
+        // other methods ignored in this summary
+    }
+
+    // ── Final / remaining part ──
+    if ($fin_amt > 0) {
+        if ($fin_method === 'cash') {
+            $final_cash += $fin_amt;
+        } elseif ($fin_method === 'online') {
+            $final_online += $fin_amt;
+        }
+        // other methods ignored
+    }
+
+    // ── Direct sales (no advance AND no final installment) ──
+    if ($adv_amt <= 0 && $fin_amt <= 0 && $total_amt > 0) {
+        if ($fin_method === 'cash') {
+            $direct_cash += $total_amt;
+        } elseif ($fin_method === 'online') {
+            $direct_online += $total_amt;
+        }
+        // Note: we use $fin_method (payment_method) here, because in direct sales
+        // the single payment is stored in payment_method, not advance_payment_method
+    }
+}
 // Aggregate items
 $aggregatedItems = [];
 foreach ($sales as $s) {
@@ -375,6 +420,50 @@ foreach ($sales as $s) {
         </a>
         <a href="dashboard.php" class="btn btn-back">Back to Dashboard</a>
     </div>
+
+    <!-- Payment Received Summary -->
+<div style="margin: 30px 0; text-align: center;">
+    <h2 style="color: #27ae60; margin-bottom: 15px;">Payment Received Breakdown</h2>
+    <table class="summary-table" style="margin: 0 auto; width: auto; min-width: 620px; border-collapse: collapse;">
+        <thead>
+            <tr>
+                <th style="padding: 12px; background: #27ae60; color: white;">Category</th>
+                <th style="padding: 12px; background: #27ae60; color: white;" class="numeric">Cash</th>
+                <th style="padding: 12px; background: #27ae60; color: white;" class="numeric">Online</th>
+                <th style="padding: 12px; background: #27ae60; color: white;" class="numeric">Subtotal</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td style="padding: 12px; font-weight: 500;">Advance Payments</td>
+                <td class="numeric" style="padding: 12px;"><?= number_format($advance_cash, 2) ?></td>
+                <td class="numeric" style="padding: 12px;"><?= number_format($advance_online, 2) ?></td>
+                <td class="numeric" style="padding: 12px; font-weight: 600;"><?= number_format($advance_cash + $advance_online, 2) ?></td>
+            </tr>
+            <tr>
+                <td style="padding: 12px; font-weight: 500;">Final / Remaining Payments</td>
+                <td class="numeric" style="padding: 12px;"><?= number_format($final_cash, 2) ?></td>
+                <td class="numeric" style="padding: 12px;"><?= number_format($final_online, 2) ?></td>
+                <td class="numeric" style="padding: 12px; font-weight: 600;"><?= number_format($final_cash + $final_online, 2) ?></td>
+            </tr>
+            <tr>
+                <td style="padding: 12px; font-weight: 500;">Direct Sales (one-time)</td>
+                <td class="numeric" style="padding: 12px;"><?= number_format($direct_cash, 2) ?></td>
+                <td class="numeric" style="padding: 12px;"><?= number_format($direct_online, 2) ?></td>
+                <td class="numeric" style="padding: 12px; font-weight: 600;"><?= number_format($direct_cash + $direct_online, 2) ?></td>
+            </tr>
+            <tr class="grand-total" style="background: #d5f4e6; font-weight: bold; font-size: 1.1rem;">
+                <td style="padding: 14px; text-align: right;">Grand Total Received</td>
+                <td class="numeric" style="padding: 14px;"><?= number_format($advance_cash + $final_cash + $direct_cash, 2) ?></td>
+                <td class="numeric" style="padding: 14px;"><?= number_format($advance_online + $final_online + $direct_online, 2) ?></td>
+                <td class="numeric" style="padding: 14px;"><?= number_format(
+                    $advance_cash + $advance_online +
+                    $final_cash   + $final_online   +
+                    $direct_cash  + $direct_online, 2) ?></td>
+            </tr>
+        </tbody>
+    </table>
+</div>
 
     <?php if(empty($sales)): ?>
         <p style="text-align:center;color:#7f8c8d;font-size:1.2rem;padding:40px;">No sales found.</p>
