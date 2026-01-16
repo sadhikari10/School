@@ -35,17 +35,60 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     if (!empty($_GET['printed_by'])) { $where[] = "printed_by LIKE ?"; $params[] = "%{$_GET['printed_by']}%"; }
     if (!empty($_GET['bill_number'])) { $where[] = "bill_number LIKE ?"; $params[] = "%{$_GET['bill_number']}%"; }
 
-    // Date range filter only if provided
+    // ─────────────────────────────────────────────
+    // Date filtering logic ─ default: last ~30 days
+    // ─────────────────────────────────────────────
+    $default_range_applied = false;
+
     if (!empty($_GET['start_date']) && !empty($_GET['end_date'])) {
+        // User gave explicit bs_datetime range
         $where[] = "bs_datetime BETWEEN ? AND ?";
         $params[] = $_GET['start_date'] . ' 00:00:00';
         $params[] = $_GET['end_date'] . ' 23:59:59';
     }
-    // Advance date filter
-    if (!empty($_GET['adv_start_date']) && !empty($_GET['adv_end_date'])) {
+    elseif (!empty($_GET['adv_start_date']) && !empty($_GET['adv_end_date'])) {
+        // User gave explicit advance_date range
         $where[] = "advance_date BETWEEN ? AND ?";
         $params[] = $_GET['adv_start_date'];
         $params[] = $_GET['adv_end_date'];
+    }
+    else {
+        // DEFAULT: last 30 days in BS date
+        $default_range_applied = true;
+
+        $today_str = nepali_date_time();                    // e.g. "2082-04-01 14:30"
+        $today_date = explode(' ', $today_str)[0];          // "2082-04-01"
+        list($yy, $mm, $dd) = explode('-', $today_date);
+
+        $yy = (int)$yy;
+        $mm = (int)$mm;
+        $dd = (int)$dd;
+
+        $dates = [];
+
+        // Generate approx last 30 days (simple backward subtraction)
+        for ($i = 0; $i < 30; $i++) {
+            $day = $dd - $i;
+            $month = $mm;
+            $year = $yy;
+
+            while ($day < 1) {
+                $month--;
+                if ($month < 1) {
+                    $month = 12;
+                    $year--;
+                }
+                $day += 30; // rough approximation — enough for filtering
+            }
+
+            $dates[] = sprintf('%04d-%02d-%02d', $year, $month, $day);
+        }
+
+        if (!empty($dates)) {
+            $placeholders = implode(',', array_fill(0, count($dates), '?'));
+            $where[] = "DATE(bs_datetime) IN ($placeholders)";
+            $params = array_merge($params, $dates);
+        }
     }
 
     $sql = "SELECT * FROM sales WHERE " . implode(' AND ', $where) . " ORDER BY bs_datetime DESC";
@@ -53,15 +96,55 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $stmt->execute($params);
     $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Grand totals
+    // ─────────────────────────────────────────────
+    // CALCULATE ALL TOTALS (including payment breakdown)
+    // ─────────────────────────────────────────────
     $grand_total = $grand_advance = $grand_final = 0;
+    $advance_cash = $advance_online = 0;
+    $final_cash   = $final_online   = 0;
+    $direct_cash  = $direct_online  = 0;
+
     foreach ($sales as $s) {
-        $grand_total   += $s['total'];
-        $grand_advance += $s['advance_amount'] > 0 ? $s['advance_amount'] : 0;
-        $grand_final   += $s['final_amount'];
+        $total_amt   = floatval($s['total'] ?? 0);
+        $adv_amt     = floatval($s['advance_amount'] ?? 0);
+        $fin_amt     = floatval($s['final_amount'] ?? 0);
+
+        $grand_total   += $total_amt;
+        $grand_advance += ($adv_amt > 0) ? $adv_amt : 0;
+        $grand_final   += $fin_amt;
+
+        $adv_method  = strtolower(trim($s['advance_payment_method'] ?? ''));
+        $fin_method  = strtolower(trim($s['payment_method'] ?? ''));
+
+        // ── Advance part ──
+        if ($adv_amt > 0) {
+            if ($adv_method === 'cash') {
+                $advance_cash += $adv_amt;
+            } elseif ($adv_method === 'online') {
+                $advance_online += $adv_amt;
+            }
+        }
+
+        // ── Final / remaining part ──
+        if ($fin_amt > 0) {
+            if ($fin_method === 'cash') {
+                $final_cash += $fin_amt;
+            } elseif ($fin_method === 'online') {
+                $final_online += $fin_amt;
+            }
+        }
+
+        // ── Direct sales (no advance AND no final installment) ──
+        if ($adv_amt <= 0 && $fin_amt <= 0 && $total_amt > 0) {
+            if ($fin_method === 'cash') {
+                $direct_cash += $total_amt;
+            } elseif ($fin_method === 'online') {
+                $direct_online += $total_amt;
+            }
+        }
     }
 
-    // Aggregate items
+    // Aggregate items (unchanged)
     $aggregatedItems = [];
     foreach ($sales as $s) {
         $rawItems = json_decode($s['items_json'], true) ?? [];
@@ -93,11 +176,14 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
         }
     }
 
+    // ─────────────────────────────────────────────
+    // CREATE SPREADSHEET
+    // ─────────────────────────────────────────────
     $spreadsheet = new Spreadsheet();
     $sheet = $spreadsheet->getActiveSheet();
     $sheet->setTitle('Sales Report');
 
-    // Detailed Section
+    // ── Detailed Sales Section ──
     $headers = ['S.N', 'Bill No.', 'Fiscal Year', 'School', 'Customer', 'Total', 'Advance', 'Adv. Date', 'Final Paid', 'Final Pay', 'Adv. Pay', 'Printed By', 'Date & Time', 'Items'];
     $col = 'A';
     foreach ($headers as $h) $sheet->setCellValue($col++ . '1', $h);
@@ -132,16 +218,65 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
         $row++;
     }
 
-    // Grand Total Row
+    // Grand Total Row (detailed section)
     $sheet->setCellValue('E' . $row, 'GRAND TOTAL');
     $sheet->setCellValue('F' . $row, $grand_total);
     $sheet->setCellValue('G' . $row, $grand_advance);
     $sheet->setCellValue('I' . $row, $grand_final);
     $sheet->getStyle('E' . $row . ':I' . $row)->getFont()->setBold(true)->setSize(13);
     $sheet->getStyle('F2:I' . $row)->getNumberFormat()->setFormatCode('#,##0.00');
-    $row += 2;
+    $row += 3;  // more spacing before next section
 
-    // Aggregated Summary
+    // ── PAYMENT RECEIVED BREAKDOWN ──
+    $sheet->setCellValue('A' . $row, 'PAYMENT RECEIVED BREAKDOWN');
+    $sheet->getStyle('A' . $row)->getFont()->setBold(true)->setSize(14);
+    $sheet->mergeCells('A' . $row . ':D' . $row);
+    $sheet->getStyle('A' . $row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+    $row++;
+
+    $breakdownHeaders = ['Category', 'Cash', 'Online', 'Subtotal'];
+    $col = 'A';
+    foreach ($breakdownHeaders as $h) {
+        $sheet->setCellValue($col++ . $row, $h);
+    }
+    $sheet->getStyle('A' . $row . ':D' . $row)->getFont()->setBold(true)->setSize(12);
+    $sheet->getStyle('A' . $row . ':D' . $row)->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('FF27AE60');
+    $row++;
+
+    // Data rows
+    $sheet->setCellValue('A' . $row, 'Advance Payments');
+    $sheet->setCellValue('B' . $row, $advance_cash);
+    $sheet->setCellValue('C' . $row, $advance_online);
+    $sheet->setCellValue('D' . $row, $advance_cash + $advance_online);
+    $row++;
+
+    $sheet->setCellValue('A' . $row, 'Final / Remaining Payments');
+    $sheet->setCellValue('B' . $row, $final_cash);
+    $sheet->setCellValue('C' . $row, $final_online);
+    $sheet->setCellValue('D' . $row, $final_cash + $final_online);
+    $row++;
+
+    $sheet->setCellValue('A' . $row, 'Direct Sales (one-time)');
+    $sheet->setCellValue('B' . $row, $direct_cash);
+    $sheet->setCellValue('C' . $row, $direct_online);
+    $sheet->setCellValue('D' . $row, $direct_cash + $direct_online);
+    $row++;
+
+    // Grand total of breakdown
+    $sheet->setCellValue('A' . $row, 'Grand Total Received');
+    $sheet->setCellValue('B' . $row, $advance_cash + $final_cash + $direct_cash);
+    $sheet->setCellValue('C' . $row, $advance_online + $final_online + $direct_online);
+    $sheet->setCellValue('D' . $row, 
+        $advance_cash + $advance_online + 
+        $final_cash   + $final_online   + 
+        $direct_cash  + $direct_online
+    );
+    $sheet->getStyle('A' . $row . ':D' . $row)->getFont()->setBold(true)->setSize(13);
+    $sheet->getStyle('B' . ($row - 4) . ':D' . $row)->getNumberFormat()->setFormatCode('#,##0.00');
+    $sheet->getStyle('B' . ($row - 4) . ':D' . $row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+    $row += 3;  // spacing before items summary
+
+    // ── Aggregated Item Summary ── (unchanged)
     if (!empty($aggregatedItems)) {
         $sheet->setCellValue('A' . $row, 'AGGREGATED ITEM SUMMARY');
         $sheet->getStyle('A' . $row)->getFont()->setBold(true)->setSize(14);
@@ -178,8 +313,16 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
         $sheet->getStyle('E' . ($row - count($aggregatedItems) - 1) . ':G' . $row)->getNumberFormat()->setFormatCode('#,##0.00');
     }
 
-    foreach (range('A', 'N') as $c) $sheet->getColumnDimension($c)->setAutoSize(true);
+    // Auto-size columns
+    foreach (range('A', 'N') as $c) {
+        $sheet->getColumnDimension($c)->setAutoSize(true);
+    }
     $sheet->getColumnDimension('N')->setWidth(60);
+    // Make payment breakdown columns nice
+    $sheet->getColumnDimension('A')->setWidth(28);
+    $sheet->getColumnDimension('B')->setWidth(14);
+    $sheet->getColumnDimension('C')->setWidth(14);
+    $sheet->getColumnDimension('D')->setWidth(16);
 
     ob_end_clean();
     $filename = "Sales_Report_" . date('Y-m-d') . ".xlsx";
@@ -259,19 +402,20 @@ else {
         $params = array_merge($params, $dates);
     }
 }
-
 // Build and execute query
 $sql = "SELECT * FROM sales WHERE " . implode(' AND ', $where) . " ORDER BY bs_datetime DESC";
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
-// Grand totals for display
-$grand_total = $grand_advance = $grand_final = 0;
-foreach ($sales as $s) {
-    $grand_total   += $s['total'];
-    $grand_advance += $s['advance_amount'] > 0 ? $s['advance_amount'] : 0;
-    $grand_final   += $s['final_amount'];
-}// Payment breakdown - Cash vs Online, now with Direct Sales category
+
+// ─────────────────────────────────────────────
+// Single loop: calculate both grand totals AND payment breakdown
+// ─────────────────────────────────────────────
+
+$grand_total    = 0;
+$grand_advance  = 0;
+$grand_final    = 0;
+
 $advance_cash   = 0;
 $advance_online = 0;
 $final_cash     = 0;
@@ -280,42 +424,69 @@ $direct_cash    = 0;
 $direct_online  = 0;
 
 foreach ($sales as $s) {
-    $adv_amt  = floatval($s['advance_amount'] ?? 0);
-    $fin_amt  = floatval($s['final_amount'] ?? 0);
-    $total_amt = floatval($s['total'] ?? 0);
+    $total   = floatval($s['total']           ?? 0);
+    $advance = floatval($s['advance_amount']  ?? 0);
+    $final   = floatval($s['final_amount']    ?? 0);
 
     $adv_method = strtolower(trim($s['advance_payment_method'] ?? ''));
-    $fin_method = strtolower(trim($s['payment_method'] ?? ''));
+    $pay_method = strtolower(trim($s['payment_method']         ?? ''));
 
-    // ── Advance part ──
-    if ($adv_amt > 0) {
+    // Grand totals (only once!)
+    $grand_total   += $total;
+    $grand_advance += ($advance > 0 ? $advance : 0);
+    $grand_final   += $final;
+
+    // ── Advance portion ──
+    if ($advance > 0) {
         if ($adv_method === 'cash') {
-            $advance_cash += $adv_amt;
+            $advance_cash += $advance;
         } elseif ($adv_method === 'online') {
-            $advance_online += $adv_amt;
+            $advance_online += $advance;
         }
-        // other methods ignored in this summary
+        // you can add more methods later (cheque, etc.) if needed
     }
 
-    // ── Final / remaining part ──
-    if ($fin_amt > 0) {
-        if ($fin_method === 'cash') {
-            $final_cash += $fin_amt;
-        } elseif ($fin_method === 'online') {
-            $final_online += $fin_amt;
+    // ── Final / remaining portion ──
+    if ($final > 0) {
+        if ($pay_method === 'cash') {
+            $final_cash += $final;
+        } elseif ($pay_method === 'online') {
+            $final_online += $final;
         }
-        // other methods ignored
+        // add more payment methods here if your system supports them
     }
 
-    // ── Direct sales (no advance AND no final installment) ──
-    if ($adv_amt <= 0 && $fin_amt <= 0 && $total_amt > 0) {
-        if ($fin_method === 'cash') {
-            $direct_cash += $total_amt;
-        } elseif ($fin_method === 'online') {
-            $direct_online += $total_amt;
+    // ── Direct / one-time sales ──
+    $has_advance = $advance > 0;
+    $has_final   = $final > 0;
+
+    if (!$has_advance) {
+        if (!$has_final) {
+            // Classic direct sale: advance = 0, final = 0
+            if ($pay_method === 'cash') {
+                $direct_cash += $total;
+            } elseif ($pay_method === 'online') {
+                $direct_online += $total;
+            }
         }
-        // Note: we use $fin_method (payment_method) here, because in direct sales
-        // the single payment is stored in payment_method, not advance_payment_method
+        elseif (abs($final - $total) < 1) {
+            // Likely a direct sale where final_amount was incorrectly filled
+            if ($pay_method === 'cash') {
+                $direct_cash += $total;
+            } elseif ($pay_method === 'online') {
+                $direct_online += $total;
+            }
+            // Optional: log suspicious cases
+            // error_log("Possible misclassified direct sale - bill: {$s['bill_number']}, final={$final}, total={$total}");
+        }
+        else {
+            // Rare: advance=0 but final > 0 and final ≠ total → treat as final payment
+            if ($pay_method === 'cash') {
+                $final_cash += $final;
+            } elseif ($pay_method === 'online') {
+                $final_online += $final;
+            }
+        }
     }
 }
 // Aggregate items
