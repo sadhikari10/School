@@ -244,11 +244,6 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     $row++;
 
     // Data rows
-    $sheet->setCellValue('A' . $row, 'Advance Payments');
-    $sheet->setCellValue('B' . $row, $advance_cash);
-    $sheet->setCellValue('C' . $row, $advance_online);
-    $sheet->setCellValue('D' . $row, $advance_cash + $advance_online);
-    $row++;
 
     $sheet->setCellValue('A' . $row, 'Final / Remaining Payments');
     $sheet->setCellValue('B' . $row, $final_cash);
@@ -264,10 +259,9 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
 
     // Grand total of breakdown
     $sheet->setCellValue('A' . $row, 'Grand Total Received');
-    $sheet->setCellValue('B' . $row, $advance_cash + $final_cash + $direct_cash);
-    $sheet->setCellValue('C' . $row, $advance_online + $final_online + $direct_online);
+    $sheet->setCellValue('B' . $row, $final_cash + $direct_cash);
+    $sheet->setCellValue('C' . $row, $final_online + $direct_online);
     $sheet->setCellValue('D' . $row, 
-        $advance_cash + $advance_online + 
         $final_cash   + $final_online   + 
         $direct_cash  + $direct_online
     );
@@ -348,28 +342,45 @@ if (!empty($_GET['printed_by'])) { $where[] = "printed_by LIKE ?"; $params[] = "
 if (!empty($_GET['bill_number'])) { $where[] = "bill_number LIKE ?"; $params[] = "%{$_GET['bill_number']}%"; }
 
 // ─────────────────────────────────────────────
-// Date filtering logic ─ default: last ~30 days
+// Date filtering logic — default: last ~30 days ONLY if no filters are active
 // ─────────────────────────────────────────────
-$default_range_applied = false;
+$apply_default_30days = true;
 
-if (!empty($_GET['start_date']) && !empty($_GET['end_date'])) {
-    // User gave explicit bs_datetime range
-    $where[] = "bs_datetime BETWEEN ? AND ?";
-    $params[] = $_GET['start_date'] . ' 00:00:00';
-    $params[] = $_GET['end_date'] . ' 23:59:59';
+// If user provided ANY filter → disable automatic 30-day limit
+if (!empty($_GET['start_date'])   || !empty($_GET['end_date']) ||
+    !empty($_GET['adv_start_date']) || !empty($_GET['adv_end_date']) ||
+    !empty($_GET['fiscal_year']) ||
+    !empty($_GET['school_name']) ||
+    !empty($_GET['customer_name']) ||
+    !empty($_GET['payment_method']) ||
+    !empty($_GET['advance_payment_method']) ||
+    !empty($_GET['printed_by']) ||
+    !empty($_GET['bill_number'])) 
+{
+    $apply_default_30days = false;
 }
-elseif (!empty($_GET['adv_start_date']) && !empty($_GET['adv_end_date'])) {
-    // User gave explicit advance_date range
-    $where[] = "advance_date BETWEEN ? AND ?";
-    $params[] = $_GET['adv_start_date'];
-    $params[] = $_GET['adv_end_date'];
+
+if (!$apply_default_30days) {
+    // ── User applied at least one filter ──
+    // Only add explicit date ranges if provided
+    if (!empty($_GET['start_date']) && !empty($_GET['end_date'])) {
+        $where[] = "bs_datetime BETWEEN ? AND ?";
+        $params[] = $_GET['start_date'] . ' 00:00:00';
+        $params[] = $_GET['end_date']   . ' 23:59:59';
+    }
+    elseif (!empty($_GET['adv_start_date']) && !empty($_GET['adv_end_date'])) {
+        $where[] = "advance_date BETWEEN ? AND ?";
+        $params[] = $_GET['adv_start_date'];
+        $params[] = $_GET['adv_end_date'];
+    }
+    // If no date fields were filled → user wants ALL records matching other filters
 }
 else {
-    // DEFAULT: last 30 days in BS date
-    $default_range_applied = true;
+    // ── No filters at all → apply default last ~30 days ──
+    $default_range_applied = true;  // optional – you can keep or remove this flag
 
-    $today_str = nepali_date_time();                    // e.g. "2082-04-01 14:30"
-    $today_date = explode(' ', $today_str)[0];          // "2082-04-01"
+    $today_str  = nepali_date_time();
+    $today_date = explode(' ', $today_str)[0];
     list($yy, $mm, $dd) = explode('-', $today_date);
 
     $yy = (int)$yy;
@@ -377,12 +388,10 @@ else {
     $dd = (int)$dd;
 
     $dates = [];
-
-    // Generate approx last 30 days (simple backward subtraction)
     for ($i = 0; $i < 30; $i++) {
-        $day = $dd - $i;
+        $day   = $dd - $i;
         $month = $mm;
-        $year = $yy;
+        $year  = $yy;
 
         while ($day < 1) {
             $month--;
@@ -390,7 +399,7 @@ else {
                 $month = 12;
                 $year--;
             }
-            $day += 30; // rough approximation — enough for filtering
+            $day += 30;  // rough — sufficient for most Nepali calendar cases
         }
 
         $dates[] = sprintf('%04d-%02d-%02d', $year, $month, $day);
@@ -606,12 +615,6 @@ foreach ($sales as $s) {
         </thead>
         <tbody>
             <tr>
-                <td style="padding: 12px; font-weight: 500;">Advance Payments</td>
-                <td class="numeric" style="padding: 12px;"><?= number_format($advance_cash, 2) ?></td>
-                <td class="numeric" style="padding: 12px;"><?= number_format($advance_online, 2) ?></td>
-                <td class="numeric" style="padding: 12px; font-weight: 600;"><?= number_format($advance_cash + $advance_online, 2) ?></td>
-            </tr>
-            <tr>
                 <td style="padding: 12px; font-weight: 500;">Final / Remaining Payments</td>
                 <td class="numeric" style="padding: 12px;"><?= number_format($final_cash, 2) ?></td>
                 <td class="numeric" style="padding: 12px;"><?= number_format($final_online, 2) ?></td>
@@ -625,10 +628,9 @@ foreach ($sales as $s) {
             </tr>
             <tr class="grand-total" style="background: #d5f4e6; font-weight: bold; font-size: 1.1rem;">
                 <td style="padding: 14px; text-align: right;">Grand Total Received</td>
-                <td class="numeric" style="padding: 14px;"><?= number_format($advance_cash + $final_cash + $direct_cash, 2) ?></td>
-                <td class="numeric" style="padding: 14px;"><?= number_format($advance_online + $final_online + $direct_online, 2) ?></td>
+                <td class="numeric" style="padding: 14px;"><?= number_format($final_cash + $direct_cash, 2) ?></td>
+                <td class="numeric" style="padding: 14px;"><?= number_format($final_online + $direct_online, 2) ?></td>
                 <td class="numeric" style="padding: 14px;"><?= number_format(
-                    $advance_cash + $advance_online +
                     $final_cash   + $final_online   +
                     $direct_cash  + $direct_online, 2) ?></td>
             </tr>

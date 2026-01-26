@@ -151,7 +151,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
                     <th>Bill ID</th>
                     <th>Reason</th>
                     <th class="amount">Amt Paid<br><small>(by Customer)</small></th>
-                    <th class="amount">Amt Received<br><small>(from Customer)</small></th>
+                    <th class="amount">Amt Returned<br><small>(to Customer)</small></th>
                     <th>Logged By</th>
                     <th>Date & Time</th>
                 </tr>
