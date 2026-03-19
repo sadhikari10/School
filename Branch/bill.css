@@ -59,7 +59,7 @@ td:nth-child(5) { width:20%; text-align:right; }
     margin-left:auto; 
 }
 .grand-total { 
-    font-size:14px!important; 
+    font-size:12px!important; 
     font-weight:bold; 
     border-top:2px double #000; 
     padding-top:8px; 

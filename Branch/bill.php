@@ -509,8 +509,8 @@ if (isset($_POST['start_new_bill'])) {
 
     <div class="total-section">
         <div class="total-row"><span>Sub Total:</span><span>Rs. <?php echo number_format($subtotal, 2); ?></span></div>
-        <div class="total-row"><span>Advance Paid:</span><span id="advanceDisplay">Rs. 0.00</span></div>
-        <div class="total-row"><span>Remaining:</span><span id="remainingDisplay">Rs. <?php echo number_format($subtotal, 2); ?></span></div>
+        <div class="total-row" id="advanceRow"><span>Advance Paid:</span><span id="advanceDisplay">Rs. 0.00</span></div>
+        <div class="total-row" id="remainingRow"><span>Remaining:</span><span id="remainingDisplay">Rs. <?php echo number_format($subtotal, 2); ?></span></div>      
         <div class="total-row grand-total"><span>GRAND TOTAL:</span><span>Rs. <?php echo number_format($subtotal, 2); ?></span></div>
     </div>
 
@@ -620,6 +620,10 @@ if (isset($_POST['start_new_bill'])) {
     .overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9998; }
     .custom-alert { display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:white; padding:30px; border-radius:10px; text-align:center; z-index:9999; box-shadow:0 5px 20px rgba(0,0,0,0.3); }
     .custom-alert button { margin-top:15px; padding:10px 25px; background:#27ae60; color:white; border:none; border-radius:5px; cursor:pointer; }
+    /* Add this to your existing <style> block */
+.hidden-row { display: none !important; }
+@media print { .hidden-row { display: none !important; } }
+
 </style>
 <script>
 const totalAmount = <?php echo $subtotal; ?>;
@@ -652,16 +656,35 @@ function disableBillActions() {
 }
 
 function updateDisplay() {
-    const advance = parseFloat(document.getElementById('advanceInput').value) || 0;
+    const action = document.getElementById('billAction')?.value;
+    const advanceInput = document.getElementById('advanceInput');
+    const advanceRow = document.getElementById('advanceRow');
+    const remainingRow = document.getElementById('remainingRow');
+    
+    // Calculate values
+    const advance = parseFloat(advanceInput.value) || 0;
+    const remaining = totalAmount - advance;
+
+    // Update Text
     document.getElementById('advanceDisplay').textContent = 'Rs. ' + advance.toFixed(2);
-    document.getElementById('remainingDisplay').textContent = 'Rs. ' + (totalAmount - advance).toFixed(2);
+    document.getElementById('remainingDisplay').textContent = 'Rs. ' + remaining.toFixed(2);
     document.getElementById('customerDisplay').textContent = document.getElementById('customerName').value.trim() || 'Customer';
+
+    // Toggle Visibility Logic
+    if (action === 'paid') {
+        advanceRow.classList.add('hidden-row');
+        remainingRow.classList.add('hidden-row');
+        if (advanceInput) advanceInput.value = 0; // Reset advance input if full paid
+    } else {
+        advanceRow.classList.remove('hidden-row');
+        remainingRow.classList.remove('hidden-row');
+    }
 }
 
-// Live update when typing
+// Add the listener for the dropdown so it updates immediately when changed
+document.getElementById('billAction')?.addEventListener('change', updateDisplay);
 document.getElementById('advanceInput')?.addEventListener('input', updateDisplay);
 document.getElementById('customerName')?.addEventListener('input', updateDisplay);
-
 // Save Bill Button Logic
 document.getElementById('saveBillBtn')?.addEventListener('click', function() {
     if (this.disabled || this.textContent === 'Saved') {
