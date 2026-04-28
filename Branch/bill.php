@@ -479,11 +479,11 @@ if (isset($_POST['start_new_bill'])) {
 <!-- PRINTABLE BILL (unchanged) -->
 <div class="bill" id="printableBill">
     <div class="header">
-        <h1><?php echo htmlspecialchars($shop_name); ?></h1>
+        <h3><?php echo htmlspecialchars($shop_name); ?></h3>
         <p>Phone: 01-<?php echo htmlspecialchars($phone_number); ?></p>
         <p><?php echo htmlspecialchars($location); ?></p>
     </div>
-    <div class="info"><strong>Bill No:</strong> <?php echo $bill_number; ?></div>
+    <div class="info"><strong>Order No:</strong> <?php echo $bill_number; ?></div>
     <div class="info"><strong>Date:</strong> <?php echo $printed_date_display; ?></div>
     <div class="info"><strong>Customer:</strong> <span id="customerDisplay"><?php echo htmlspecialchars($customer_name ?: 'Customer'); ?></span></div>
     <?php 
@@ -514,7 +514,7 @@ if (isset($_POST['start_new_bill'])) {
         <div class="total-row grand-total"><span>GRAND TOTAL:</span><span>Rs. <?php echo number_format($subtotal, 2); ?></span></div>
     </div>
 
-    <div class="footer-note">Note: Exchange available within seven days</div>
+    <!-- <div class="footer-note">Note: Exchange available within seven days</div> -->
     <div class="not-tax">THIS IS NOT A TAX BILL</div>
 </div>
 
