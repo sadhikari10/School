@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 session_start();
 require '../Common/connection.php';
 require '../vendor/autoload.php'; // PhpSpreadsheet

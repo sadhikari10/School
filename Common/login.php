@@ -3,7 +3,7 @@ session_start();
 require '../Common/connection.php';  // Make sure this path is correct
 
 // === SYSTEM EXPIRY CHECK (HARDCODED) ===
-$expiry_date = '2026-12-20';  // ←←← CHANGE THIS DATE WHEN RENEWING (YYYY-MM-DD)
+$expiry_date = '2026-12-20';  // ??? CHANGE THIS DATE WHEN RENEWING (YYYY-MM-DD)
 
 $current_date = date('Y-m-d');
 $is_expired = ($current_date > $expiry_date);

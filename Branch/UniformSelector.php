@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 class UniformSelector {
     private $pdo;
     private $school_id;
